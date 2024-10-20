@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Game from "./components/Game";
 
 export default function Home() {
@@ -15,12 +16,12 @@ export default function Home() {
 
       {/* Section jeu avec fond noir */}
       <div className="p-6 bg-black shadow-lg rounded-lg border border-gray-300">
-        <Game />
+        <Game showShip={false} /> {/* Le vaisseau ne s'affichera pas ici */}
       </div>
 
       {/* Section avec boutons ou instructions */}
       <div className="mt-8">
-        <button className="btn btn-primary">Start Game</button>
+        <Link href="/game">Start Game</Link>
       </div>
     </main>
   );

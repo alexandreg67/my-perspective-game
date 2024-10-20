@@ -10,7 +10,6 @@ const transformPerspective = (
   perspectivePointY: number,
   height: number
 ): [number, number] => {
-  // Calculer la distance par rapport au point de fuite
   const linY = y / height; // On avance vers le bas de l'écran
   const factorY = Math.pow(linY, 3); // Facteur de profondeur ajusté
 
@@ -22,11 +21,34 @@ const transformPerspective = (
   return [trX, trY]; // Retourner les nouvelles coordonnées
 };
 
-const Game: React.FC = () => {
+interface GameProps {
+  showShip: boolean; // Indiquer si le vaisseau doit être affiché
+}
+
+const Game: React.FC<GameProps> = ({ showShip }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [context, setContext] = useState<CanvasRenderingContext2D | null>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 900, height: 400 });
+  const [shipPosition, setShipPosition] = useState(2); // Position du vaisseau sur la grille
   const [currentOffsetY, setCurrentOffsetY] = useState(0);
-  const [currentSpeedX, setCurrentSpeedX] = useState(0);
+
+  const nbColumns = 5; // Nombre de colonnes dans la grille
+
+  useEffect(() => {
+    const updateCanvasSize = () => {
+      const parent = canvasRef.current?.parentElement;
+      if (parent) {
+        const width = parent.clientWidth;
+        const height = parent.clientHeight;
+        setCanvasSize({ width, height });
+      }
+    };
+
+    updateCanvasSize();
+    window.addEventListener("resize", updateCanvasSize);
+
+    return () => window.removeEventListener("resize", updateCanvasSize);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -41,67 +63,58 @@ const Game: React.FC = () => {
   useEffect(() => {
     const draw = () => {
       if (context) {
-        const { width, height } = context.canvas;
+        const { width, height } = canvasSize;
         context.clearRect(0, 0, width, height);
 
-        // Le point de fuite légèrement en haut, mais au-dessus de la ligne horizontale la plus large
         const perspectivePointX = width / 2;
-        const perspectivePointY = height * 0.2; // Le point de fuite est légèrement en haut
+        const perspectivePointY = height * 0.2;
 
         const lineColor = "white";
 
-        // Dessiner les lignes verticales
-        const vNbLines = 10;
-        const vLineSpacing = 0.25; // Pourcentage de la largeur de l'écran
-        const centralLineX = width / 2;
-        const spacingX = vLineSpacing * width;
-        let offsetX = -Math.floor(vNbLines / 2) + 0.5;
+        // Dessiner les lignes verticales (grille)
+        const spacingX = width / nbColumns; // Largeur d'une colonne
         context.beginPath();
         context.strokeStyle = lineColor;
 
-        for (let i = 0; i < vNbLines; i++) {
-          const lineX = centralLineX + offsetX * spacingX + currentSpeedX;
+        for (let i = 0; i <= nbColumns; i++) {
+          const lineX = i * spacingX;
           const [x1, y1] = transformPerspective(
             lineX,
-            height, // L'endroit où la ligne est la plus large (sol, en bas)
+            height,
             perspectivePointX,
             perspectivePointY,
             height
           );
           const [x2, y2] = transformPerspective(
             lineX,
-            0, // Converge vers le point de fuite en haut
+            0,
             perspectivePointX,
             perspectivePointY,
             height
           );
           context.moveTo(x1, y1);
           context.lineTo(x2, y2);
-          offsetX += 1;
         }
         context.stroke();
 
         // Dessiner les lignes horizontales
         const hNbLines = 8;
-        const hLineSpacing = 0.15; // Pourcentage de la hauteur de l'écran
+        const hLineSpacing = 0.15;
         const spacingY = hLineSpacing * height;
-        offsetX = -Math.floor(vNbLines / 2) + 0.5;
-        const xmin = centralLineX + offsetX * spacingX + currentSpeedX;
-        const xmax = centralLineX - offsetX * spacingX + currentSpeedX;
         context.beginPath();
         context.strokeStyle = lineColor;
 
         for (let i = 0; i < hNbLines; i++) {
-          const lineY = height - i * spacingY + currentOffsetY; // Le bas pour donner l'impression de progression
+          const lineY = height - i * spacingY + currentOffsetY;
           const [x1, y1] = transformPerspective(
-            xmin,
+            0,
             lineY,
             perspectivePointX,
             perspectivePointY,
             height
           );
           const [x2, y2] = transformPerspective(
-            xmax,
+            width,
             lineY,
             perspectivePointX,
             perspectivePointY,
@@ -111,18 +124,33 @@ const Game: React.FC = () => {
           context.lineTo(x2, y2);
         }
         context.stroke();
+
+        // Dessiner le vaisseau si `showShip` est vrai
+        if (showShip) {
+          const shipCenterX = (shipPosition + 0.5) * spacingX;
+          const shipY = height - 100;
+
+          // Dessiner un triangle pour représenter le vaisseau
+          context.beginPath();
+          context.moveTo(shipCenterX, shipY);
+          context.lineTo(shipCenterX - 20, shipY + 40);
+          context.lineTo(shipCenterX + 20, shipY + 40);
+          context.closePath();
+          context.fillStyle = "white";
+          context.fill();
+        }
       }
     };
 
     const animationFrameId = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [context, currentOffsetY, currentSpeedX]);
+  }, [context, canvasSize, shipPosition, currentOffsetY, showShip]);
 
   useEffect(() => {
     const update = () => {
       setCurrentOffsetY((prevOffsetY) => {
-        let newOffsetY = prevOffsetY + 6; // Vitesse de défilement vertical
-        const spacingY = context ? 0.15 * context.canvas.height : 0; // Espacement vertical des lignes
+        let newOffsetY = prevOffsetY + 6;
+        const spacingY = 0.15 * canvasSize.height;
         if (newOffsetY >= spacingY) {
           newOffsetY -= spacingY;
         }
@@ -130,49 +158,25 @@ const Game: React.FC = () => {
       });
     };
 
-    const intervalId = setInterval(update, 1000 / 60); // Mettre à jour 60 fois par seconde
+    const intervalId = setInterval(update, 1000 / 60);
     return () => clearInterval(intervalId);
-  }, [context]);
+  }, [canvasSize.height]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "ArrowLeft") {
-      setCurrentSpeedX(12); // Vitesse de déplacement horizontal vers la gauche
+      setShipPosition((prevPos) => Math.max(prevPos - 1, 0)); // Aller à gauche dans la grille
     } else if (event.key === "ArrowRight") {
-      setCurrentSpeedX(-12); // Vitesse de déplacement horizontal vers la droite
+      setShipPosition((prevPos) => Math.min(prevPos + 1, nbColumns - 1)); // Aller à droite dans la grille
     }
-  };
-
-  const handleKeyUp = () => {
-    setCurrentSpeedX(0);
-  };
-
-  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    const touchX = event.touches[0].clientX;
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const canvasX = touchX - rect.left;
-      if (canvasX < canvas.width / 2) {
-        setCurrentSpeedX(12);
-      } else {
-        setCurrentSpeedX(-12);
-      }
-    }
-  };
-
-  const handleTouchEnd = () => {
-    setCurrentSpeedX(0);
   };
 
   return (
-    <div
-      onKeyDown={handleKeyDown}
-      onKeyUp={handleKeyUp}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      tabIndex={0} // Permet au div de recevoir le focus pour les événements clavier
-    >
-      <canvas ref={canvasRef} width={900} height={400} />
+    <div onKeyDown={handleKeyDown} tabIndex={0} className="w-full h-full">
+      <canvas
+        ref={canvasRef}
+        width={canvasSize.width}
+        height={canvasSize.height}
+      />
     </div>
   );
 };
