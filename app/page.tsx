@@ -4,7 +4,6 @@ import Game from "./components/Game";
 export default function Home() {
   return (
     <main className="min-h-screen bg-base-200 flex flex-col items-center justify-center">
-      {/* Section titre */}
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-primary">
           Welcome to the Racing Game!
@@ -14,12 +13,20 @@ export default function Home() {
         </p>
       </div>
 
-      {/* Section jeu avec fond noir */}
-      <div className="p-6 bg-black shadow-lg rounded-lg border border-gray-300">
-        <Game showShip={false} /> {/* Le vaisseau ne s'affichera pas ici */}
+      {/* Restaurer le style initial pour le canvas */}
+      <div
+        className="p-6 bg-black shadow-lg rounded-lg border border-gray-300"
+        style={{ width: "600px", height: "400px" }}
+      >
+        <Game
+          showShip={false}
+          showScore={false}
+          canvasWidth={600}
+          canvasHeight={400}
+        />{" "}
+        {/* Ajustement du canvas */}
       </div>
 
-      {/* Section avec boutons ou instructions */}
       <div className="mt-8">
         <Link href="/game">Start Game</Link>
       </div>

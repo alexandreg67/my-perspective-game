@@ -22,9 +22,12 @@ const GamePage: React.FC = () => {
         Score: {score}
       </div>
 
-      {/* Jeu avec zone agrandie, bordures et vaisseau */}
-      <div className="p-6 w-[90vw] h-[80vh] bg-black shadow-lg rounded-lg border-4 border-gray-300 flex items-center justify-center">
-        <Game showShip={true} /> {/* Afficher le vaisseau */}
+      <div className="relative min-h-screen bg-base-200 flex flex-col items-center justify-center">
+        {/* Canvas avec dimensions ajustées et centré */}
+        <div className="p-6 w-[90vw] h-[80vh] bg-black shadow-lg rounded-lg border-4 border-gray-300 flex items-center justify-center">
+          <Game showShip={true} showScore={true} />{" "}
+          {/* Afficher le vaisseau et le score */}
+        </div>
       </div>
     </div>
   );

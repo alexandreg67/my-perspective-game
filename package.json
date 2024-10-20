@@ -12,7 +12,8 @@
     "daisyui": "^4.12.13",
     "next": "14.2.15",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "tone": "^15.0.4"
   },
   "devDependencies": {
     "@types/node": "^20",
