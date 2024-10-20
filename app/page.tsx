@@ -18,13 +18,7 @@ export default function Home() {
         className="p-6 bg-black shadow-lg rounded-lg border border-gray-300"
         style={{ width: "600px", height: "400px" }}
       >
-        <Game
-          showShip={false}
-          showScore={false}
-          canvasWidth={600}
-          canvasHeight={400}
-        />{" "}
-        {/* Ajustement du canvas */}
+        <Game showShip={false} /> {/* Ajustement du canvas */}
       </div>
 
       <div className="mt-8">
