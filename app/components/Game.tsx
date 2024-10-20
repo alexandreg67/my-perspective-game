@@ -32,7 +32,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
   const [shipPosition, setShipPosition] = useState(2); // Position du vaisseau sur la grille
   const [currentOffsetY, setCurrentOffsetY] = useState(0);
 
-  const nbColumns = 5; // Nombre de colonnes dans la grille
+  const nbColumns = 7; // Nombre de colonnes dans la grille
 
   useEffect(() => {
     const updateCanvasSize = () => {
@@ -127,14 +127,42 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
 
         // Dessiner le vaisseau si `showShip` est vrai
         if (showShip) {
-          const shipCenterX = (shipPosition + 0.5) * spacingX;
-          const shipY = height - 100;
+          // Placer le vaisseau encore plus proche de l'avant (plus en bas)
+          const shipBottomY = height - 0; // Placer le bas du vaisseau plus proche du bas
+          const shipTopY = height - 50; // Placer le haut légèrement au-dessus du bas
 
-          // Dessiner un triangle pour représenter le vaisseau
+          // Calculer les coordonnées en perspective pour le vaisseau
+          const shipLeftX = (shipPosition + 0) * spacingX; // Côté gauche de la case du vaisseau
+          const shipRightX = (shipPosition + 1) * spacingX; // Côté droit de la case du vaisseau
+
+          // Transformation en perspective pour le haut et le bas du vaisseau
+          const [leftX1, bottomY1] = transformPerspective(
+            shipLeftX,
+            shipBottomY,
+            perspectivePointX,
+            perspectivePointY,
+            height
+          );
+          const [rightX1, bottomY2] = transformPerspective(
+            shipRightX,
+            shipBottomY,
+            perspectivePointX,
+            perspectivePointY,
+            height
+          );
+          const [topX, topY] = transformPerspective(
+            (shipLeftX + shipRightX) / 2, // Milieu pour le sommet du triangle
+            shipTopY,
+            perspectivePointX,
+            perspectivePointY,
+            height
+          );
+
+          // Dessiner le vaisseau déformé en perspective
           context.beginPath();
-          context.moveTo(shipCenterX, shipY);
-          context.lineTo(shipCenterX - 20, shipY + 40);
-          context.lineTo(shipCenterX + 20, shipY + 40);
+          context.moveTo(topX, topY); // Sommet du triangle (vaisseau)
+          context.lineTo(leftX1, bottomY1); // Bas gauche
+          context.lineTo(rightX1, bottomY2); // Bas droit
           context.closePath();
           context.fillStyle = "white";
           context.fill();
@@ -162,16 +190,23 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
     return () => clearInterval(intervalId);
   }, [canvasSize.height]);
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "ArrowLeft") {
-      setShipPosition((prevPos) => Math.max(prevPos - 1, 0)); // Aller à gauche dans la grille
-    } else if (event.key === "ArrowRight") {
-      setShipPosition((prevPos) => Math.min(prevPos + 1, nbColumns - 1)); // Aller à droite dans la grille
-    }
-  };
+  // Gestion des événements clavier pour déplacer le vaisseau
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") {
+        setShipPosition((prevPos) => Math.max(prevPos - 1, 0)); // Aller à gauche dans la grille
+      } else if (event.key === "ArrowRight") {
+        setShipPosition((prevPos) => Math.min(prevPos + 1, nbColumns - 1)); // Aller à droite dans la grille
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown); // Écouter les événements clavier
+
+    return () => window.removeEventListener("keydown", handleKeyDown); // Nettoyer l'événement
+  }, []);
 
   return (
-    <div onKeyDown={handleKeyDown} tabIndex={0} className="w-full h-full">
+    <div className="w-full h-full">
       <canvas
         ref={canvasRef}
         width={canvasSize.width}
