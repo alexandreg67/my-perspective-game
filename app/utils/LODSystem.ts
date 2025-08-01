@@ -57,8 +57,8 @@ const LOD_LEVELS: LODLevel[] = [
 ];
 
 const DEFAULT_CONFIG: LODConfig = {
-  nearDistance: 500,
-  farDistance: 1200,
+  nearDistance: 600,
+  farDistance: 1500,
   levels: LOD_LEVELS,
   adaptiveQuality: true,
   targetFrameTime: 16.67 // 60 FPS

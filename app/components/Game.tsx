@@ -34,15 +34,15 @@ interface TileCoordinate {
 const GAME_CONSTANTS = {
   NB_COLUMNS: 7,
   SCROLL_SPEED: 240, // pixels per second
-  TILE_SPACING_Y: 0.10, // Reduced further for better visibility depth
-  MIN_TILES: 60, // Significantly increased for much better forward visibility (5-6 seconds)
-  MAX_TILES: 80, // Increased for smoother generation with LOD
-  DEFAULT_CANVAS_WIDTH: 900,
-  DEFAULT_CANVAS_HEIGHT: 400,
+  TILE_SPACING: 0.07, // Reduced further for better visibility depth
+  MIN_TILES: 100, // Significantly increased for much better forward visibility (5-6 seconds)
+  MAX_TILES: 120, // Increased for smoother generation with LOD
+  DEFAULT_CANVAS_WIDTH: 1000,
+  DEFAULT_CANVAS_HEIGHT: 600,
   TARGET_FPS: 60,
-  VISIBILITY_DISTANCE: 2000, // Maximum visible distance in pixels
-  LOD_NEAR_DISTANCE: 500, // High detail distance
-  LOD_FAR_DISTANCE: 1200, // Low detail distance
+  VISIBILITY_DISTANCE: 4000, // Maximum visible distance in pixels
+  LOD_NEAR_DISTANCE: 700, // High detail distance
+  LOD_FAR_DISTANCE: 2000, // Low detail distance
 } as const;
 
 const Game: React.FC<GameProps> = ({ showShip }) => {
@@ -472,11 +472,13 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
     if (!context) return;
 
     let isRunning = true;
+    let frameCount = 0;
 
     const gameLoop = (currentTime: number) => {
       if (!isRunning) return;
 
       try {
+        frameCount++;
         // Calculate delta time for smooth animation
         const deltaTime = lastTimeRef.current > 0 ? (currentTime - lastTimeRef.current) / 1000 : 0;
         lastTimeRef.current = currentTime;
@@ -491,7 +493,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
 
           // Update scrolling
           const newOffsetY = currentState.currentOffsetY + (currentState.speed * deltaTime);
-          const spacingY = GAME_CONSTANTS.TILE_SPACING_Y * canvasSize.height;
+          const spacingY = GAME_CONSTANTS.TILE_SPACING * canvasSize.height;
 
           if (newOffsetY >= spacingY) {
             currentState.currentYLoop += 1;
@@ -563,7 +565,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         }
 
         // Update React state periodically (not every frame for performance)
-        if (Math.floor(currentTime / 100) !== Math.floor(lastTimeRef.current / 100)) {
+        if (frameCount % 10 === 0) {
           setGameState({ ...currentState });
         }
 
@@ -578,10 +580,10 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
             canvasSize,
             nbColumns: GAME_CONSTANTS.NB_COLUMNS,
             showBackground: true,
-            showGridLines: false,
-            showCenterLine: false,
+            showGridLines: true,
+            showCenterLine: true,
             gameSpeed: currentState.speed / GAME_CONSTANTS.SCROLL_SPEED,
-            scrollOffset: currentState.currentOffsetY + (currentState.currentYLoop * canvasSize.height * GAME_CONSTANTS.TILE_SPACING_Y)
+            scrollOffset: currentState.currentOffsetY + (currentState.currentYLoop * canvasSize.height * GAME_CONSTANTS.TILE_SPACING)
           });
 
           // Draw path tiles
@@ -673,23 +675,32 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
       {/* Game UI Overlay */}
       <div className="absolute inset-0 pointer-events-none">
         {/* Score and Lives */}
-        <div className="absolute top-4 left-4 text-white text-lg font-bold">
+        <div className="absolute top-4 left-4 text-white text-lg font-bold bg-black bg-opacity-50 p-3 rounded-lg">
           <div>Score: {gameState.score}</div>
           <div>Lives: {gameState.lives}</div>
           <div>Speed: {Math.round(gameState.speed)}px/s</div>
         </div>
 
         {/* Controls Info */}
-        <div className="absolute top-4 right-4 text-white text-sm text-right">
+        <div className="absolute top-4 right-4 text-white text-sm text-right bg-black bg-opacity-50 p-3 rounded-lg">
           <div>← → or A D: Move</div>
           <div>Space: Pause</div>
           <div>R: Reset</div>
         </div>
 
+        {/* Speed Boost Indicator */}
+        {speedSystemRef.current && speedSystemRef.current.getState().boostTimeRemaining > 0 && (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+            <div className="text-3xl font-bold text-yellow-400 animate-pulse">
+              BOOST!
+            </div>
+          </div>
+        )}
+
         {/* Collision Warning */}
         {gameState.lastCollision && gameState.lastCollision.severity !== 'none' && (
           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-            <div className={`text-2xl font-bold px-4 py-2 rounded ${
+            <div className={`text-2xl font-bold px-6 py-3 rounded-lg animate-pulse ${
               gameState.lastCollision.severity === 'fatal' ? 'bg-red-600 text-white' :
               gameState.lastCollision.severity === 'major' ? 'bg-orange-600 text-white' :
               'bg-yellow-600 text-black'
@@ -703,14 +714,15 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
 
         {/* Game Over Screen */}
         {gameState.gameStatus === 'gameOver' && (
-          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center pointer-events-auto">
-            <div className="bg-gray-800 text-white p-8 rounded-lg text-center">
-              <h2 className="text-3xl font-bold mb-4">Game Over</h2>
-              <p className="text-xl mb-2">Final Score: {gameState.score}</p>
-              <p className="text-lg mb-6">You survived {gameState.currentYLoop} loops!</p>
+          <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center pointer-events-auto">
+            <div className="bg-gray-900 text-white p-8 rounded-xl text-center border-2 border-blue-500 shadow-lg">
+              <h2 className="text-4xl font-bold mb-6 text-red-500">Game Over</h2>
+              <p className="text-2xl mb-3">Final Score: <span className="font-bold text-yellow-400">{gameState.score}</span></p>
+              <p className="text-xl mb-2">Distance Traveled: <span className="font-bold">{gameState.currentYLoop} segments</span></p>
+              <p className="text-lg mb-8">Top Speed: <span className="font-bold">{Math.round(speedSystemRef.current?.getSpeedBreakdown().total || 0)} px/s</span></p>
               <button 
                 onClick={resetGame}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold"
+                className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl font-bold text-xl transition-all transform hover:scale-105"
               >
                 Play Again
               </button>
@@ -720,14 +732,18 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
 
         {/* Pause Screen */}
         {gameState.gameStatus === 'paused' && (
-          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center pointer-events-auto">
-            <div className="bg-gray-800 text-white p-6 rounded-lg text-center">
-              <h2 className="text-2xl font-bold mb-4">Paused</h2>
+          <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center pointer-events-auto">
+            <div className="bg-gray-900 text-white p-8 rounded-xl text-center border-2 border-blue-500 shadow-lg">
+              <h2 className="text-3xl font-bold mb-6 text-blue-400">Paused</h2>
+              <div className="mb-6">
+                <p className="text-xl">Score: <span className="font-bold text-yellow-400">{gameState.score}</span></p>
+                <p className="text-xl">Lives: <span className="font-bold text-green-400">{gameState.lives}</span></p>
+              </div>
               <button 
                 onClick={togglePause}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded font-bold"
+                className="px-6 py-3 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 rounded-lg font-bold text-xl transition-all transform hover:scale-105"
               >
-                Resume
+                Resume Game
               </button>
             </div>
           </div>

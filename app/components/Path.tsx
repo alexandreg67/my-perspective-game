@@ -37,12 +37,12 @@ interface PathConfig {
 
 // Path configuration constants
 const PATH_CONFIG: PathConfig = {
-  tileSpacing: 0.10, // Match Game.tsx spacing for better visibility
-  cullingMargin: 200, // Increased significantly for LOD system
+  tileSpacing: 0.08, // Match Game.tsx spacing for better visibility
+  cullingMargin: 300, // Increased significantly for LOD system
   colors: {
-    primary: "#3b82f6", // Blue
-    secondary: "#1e40af", // Dark blue  
-    border: "#1e3a8a", // Very dark blue
+    primary: "#4f8df7", // Brighter blue
+    secondary: "#2563eb", // Dark blue  
+    border: "#1e40af", // Very dark blue
   },
   visualEffects: {
     enableGradient: true,

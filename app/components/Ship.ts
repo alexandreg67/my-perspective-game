@@ -27,12 +27,12 @@ interface ShipConfig {
 
 // Ship configuration constants
 const SHIP_CONFIG: ShipConfig = {
-  bottomOffset: 10,
-  height: 20,
-  widthRatio: 0.5, // Use 50% of lane width
+  bottomOffset: 15,
+  height: 25,
+  widthRatio: 0.6, // Use 60% of lane width for better visibility
   colors: {
-    body: "#2563eb", // Blue
-    highlight: "#60a5fa", // Light blue
+    body: "#3b82f6", // Brighter blue
+    highlight: "#93c5fd", // Light blue
     shadow: "#1e40af", // Dark blue
   },
 };

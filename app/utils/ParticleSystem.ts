@@ -197,12 +197,12 @@ export class ParticleSystem {
       x: baseX + (Math.random() - 0.5) * this.canvasSize.width * 0.8,
       y: this.canvasSize.height + 10,
       velocityX: (Math.random() - 0.5) * 50,
-      velocityY: -200 - intensity * 150,
-      life: 0.5 + intensity * 0.5,
-      maxLife: 0.5 + intensity * 0.5,
-      size: 1 + intensity * 2,
-      color: `hsl(${200 + Math.random() * 60}, 80%, 70%)`,
-      alpha: 0.8,
+      velocityY: -300 - intensity * 200,
+      life: 0.3 + intensity * 0.4,
+      maxLife: 0.3 + intensity * 0.4,
+      size: 1 + intensity * 3,
+      color: `hsl(${200 + Math.random() * 60}, 90%, 75%)`,
+      alpha: 0.9,
       type: 'speed_line'
     });
   }
@@ -215,17 +215,17 @@ export class ParticleSystem {
     const baseX = shipPosition * laneWidth + laneWidth / 2;
     
     const sparkColor = isBoosting ? 
-      `hsl(${30 + Math.random() * 30}, 90%, 70%)` : // Orange/yellow for boost
-      `hsl(${0 + Math.random() * 30}, 80%, 60%)`; // Red/orange for off-track
+      `hsl(${30 + Math.random() * 30}, 100%, 75%)` : // Bright orange/yellow for boost
+      `hsl(${0 + Math.random() * 30}, 90%, 65%)`; // Bright red/orange for off-track
     
     this.particles.push({
-      x: baseX + (Math.random() - 0.5) * laneWidth,
-      y: this.canvasSize.height - 30,
-      velocityX: (Math.random() - 0.5) * 100,
-      velocityY: -50 - Math.random() * 100,
-      life: 0.3 + Math.random() * 0.4,
-      maxLife: 0.3 + Math.random() * 0.4,
-      size: 2 + Math.random() * 3,
+      x: baseX + (Math.random() - 0.5) * laneWidth * 1.5,
+      y: this.canvasSize.height - 20,
+      velocityX: (Math.random() - 0.5) * 150,
+      velocityY: -80 - Math.random() * 150,
+      life: 0.4 + Math.random() * 0.5,
+      maxLife: 0.4 + Math.random() * 0.5,
+      size: 3 + Math.random() * 4,
       color: sparkColor,
       alpha: 1,
       type: 'spark'

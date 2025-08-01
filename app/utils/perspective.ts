@@ -202,12 +202,12 @@ export const isInViewingFrustum = (
  */
 export const createRacingPerspectiveConfig = (screenWidth: number, screenHeight: number): PerspectiveConfig => {
   return {
-    viewerDistance: screenHeight * 1.2, // Increased for more dramatic perspective
+    viewerDistance: screenHeight * 1.5, // Increased for more dramatic perspective
     vanishingPointX: screenWidth / 2,
-    vanishingPointY: screenHeight * 0.15, // Lower vanishing point for better track visibility
-    fieldOfView: Math.PI / 2.2 // Slightly wider field of view
+    vanishingPointY: screenHeight * 0.2, // Lower vanishing point for better track visibility
+    fieldOfView: Math.PI / 2 // Wider field of view
   };
-};
+}
 
 /**
  * Clear all caches - call when perspective configuration changes
