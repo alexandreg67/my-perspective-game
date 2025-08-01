@@ -73,13 +73,32 @@ export class CollisionDetector {
       const currentTiles = this.getTilesAtPosition(pathTiles, currentYLoop, shipY);
       
       if (currentTiles.length === 0) {
-        return {
-          hasCollision: true,
-          collisionType: 'off-track',
-          distance: 0,
-          position: { x: shipPosition, y: shipY },
-          severity: 'fatal',
-        };
+        // Check if this might be a temporary condition during tile generation
+        // Look for tiles in nearby Y positions to determine if this is just a gap
+        const nearbyTiles = pathTiles.filter(tile => 
+          Math.abs(tile.y - (currentYLoop + shipY)) <= 2
+        );
+        
+        if (nearbyTiles.length === 0) {
+          // No tiles at all - this is likely game start or serious issue
+          // Give it minor severity to allow for tile generation catch-up
+          return {
+            hasCollision: true,
+            collisionType: 'off-track',
+            distance: 0,
+            position: { x: shipPosition, y: shipY },
+            severity: 'minor', // Changed from 'fatal' to allow recovery
+          };
+        } else {
+          // There are tiles nearby, this is just a gap - no collision yet
+          return {
+            hasCollision: false,
+            collisionType: 'none',
+            distance: 0,
+            position: { x: shipPosition, y: shipY },
+            severity: 'none',
+          };
+        }
       }
 
       // Check if ship is on any valid tile

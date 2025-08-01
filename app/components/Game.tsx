@@ -129,19 +129,61 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
     }
   }, []);
 
+  // Generate initial tiles synchronously to prevent race condition at startup
+  const generateInitialTiles = useCallback(() => {
+    try {
+      const initialTiles: TileCoordinate[] = [];
+      
+      // Starting position (center of track, aligned with ship)
+      let lastX = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2); // Position 3
+      let lastY = gameStateRef.current.currentYLoop + 1; // Start at Y = 1
+      
+      // Generate initial set of tiles to ensure ship has a path
+      for (let i = 0; i < GAME_CONSTANTS.MIN_TILES; i++) {
+        // For the first few tiles, keep path straight to ensure ship can start safely
+        if (i < 3) {
+          // Keep first 3 tiles straight (no random movement)
+          initialTiles.push({ x: lastX, y: lastY });
+        } else {
+          // After first 3 tiles, allow random path generation
+          const randomStep = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
+          lastX = Math.max(0, Math.min(GAME_CONSTANTS.NB_COLUMNS - 1, lastX + randomStep));
+          initialTiles.push({ x: lastX, y: lastY });
+        }
+        lastY++;
+      }
+      
+      // Set tiles immediately (synchronous)
+      setTilesCoordinates(initialTiles);
+      
+      console.log(`Generated ${initialTiles.length} initial tiles, starting at position (${initialTiles[0]?.x}, ${initialTiles[0]?.y})`);
+      
+    } catch (error) {
+      console.error("Error generating initial tiles:", error);
+      // Fallback: ensure at least one tile exists where ship starts
+      setTilesCoordinates([{ 
+        x: Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2), 
+        y: gameStateRef.current.currentYLoop + 1 
+      }]);
+    }
+  }, []);
+
   // Initialize game controllers
   useEffect(() => {
     try {
       // Initialize player controller
       playerControllerRef.current.initialize(gameStateRef.current.shipPosition);
       
-      // Set collision detector boundaries
+      // Set collision detector boundaries (fix off-by-one error)
       collisionDetectorRef.current.setBoundaries({
         minX: 0,
-        maxX: GAME_CONSTANTS.NB_COLUMNS,
+        maxX: GAME_CONSTANTS.NB_COLUMNS - 1, // Valid positions: 0 to 6
         minY: 0,
         maxY: Number.MAX_SAFE_INTEGER,
       });
+
+      // Generate initial tiles synchronously to prevent race condition
+      generateInitialTiles();
 
     } catch (error) {
       console.error("Error initializing game controllers:", error);
@@ -159,7 +201,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         console.error("Error cleaning up game controllers:", error);
       }
     };
-  }, []);
+  }, [generateInitialTiles]);
 
   // Optimized tile generation with memoization and performance improvements
   const generateTilesCoordinates = useCallback(() => {
@@ -276,17 +318,14 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         GAME_CONSTANTS.NB_COLUMNS
       );
       
-      // Clear tiles
-      setTilesCoordinates([]);
-      
-      // Generate initial tiles
-      setTimeout(generateTilesCoordinates, 0);
+      // Generate initial tiles synchronously to prevent race condition
+      generateInitialTiles();
       
     } catch (error) {
       console.error('Error resetting game:', error);
       setGameError('Failed to reset game');
     }
-  }, [generateTilesCoordinates]);
+  }, [generateInitialTiles]);
 
   // Pause/unpause game
   const togglePause = useCallback(() => {
@@ -358,19 +397,30 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
             currentState.currentOffsetY = newOffsetY - spacingY;
             currentState.score += 10; // Increment score
             
-            // Generate new tiles asynchronously to avoid blocking
-            setTimeout(generateTilesCoordinates, 0);
+            // Generate new tiles synchronously before collision detection
+            generateTilesCoordinates();
           } else {
             currentState.currentOffsetY = newOffsetY;
           }
 
-          // Check collisions
-          const collisionResult = collisionDetectorRef.current.checkAllCollisions(
-            currentState.shipPosition,
-            0, // Ship Y position (always at bottom)
-            tilesCoordinates,
-            currentState.currentYLoop
-          );
+          // Check collisions (after tile generation if needed)
+          // Only check collisions if we have sufficient tiles to avoid false positives
+          let collisionResult: CollisionResult = { 
+            hasCollision: false, 
+            severity: 'none', 
+            collisionType: 'none', 
+            distance: 0, 
+            position: { x: currentState.shipPosition, y: 0 } 
+          };
+          
+          if (tilesCoordinates.length >= 3) { // Require at least 3 tiles before collision detection
+            collisionResult = collisionDetectorRef.current.checkAllCollisions(
+              currentState.shipPosition,
+              0, // Ship Y position (always at bottom)
+              tilesCoordinates,
+              currentState.currentYLoop
+            );
+          }
 
           // Handle collision
           if (collisionResult.hasCollision && collisionResult.severity !== 'none') {
