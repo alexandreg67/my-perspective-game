@@ -129,26 +129,69 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
     }
   }, []);
 
+  // Generate multi-tile width route segments for coherent path
+  const generateRouteSegment = useCallback((centerX: number, y: number, width: number = 2): TileCoordinate[] => {
+    const tiles: TileCoordinate[] = [];
+    const halfWidth = Math.floor(width / 2);
+    
+    // Create tiles around the center position
+    for (let offset = -halfWidth; offset <= halfWidth; offset++) {
+      const tileX = centerX + offset;
+      // Ensure tile is within bounds
+      if (tileX >= 0 && tileX < GAME_CONSTANTS.NB_COLUMNS) {
+        tiles.push({ x: tileX, y: y });
+      }
+    }
+    
+    // If we have odd width and room, add one more tile randomly to left or right
+    if (width % 2 === 1 && width > 2) {
+      const extraOffset = Math.random() < 0.5 ? -halfWidth - 1 : halfWidth + 1;
+      const extraX = centerX + extraOffset;
+      if (extraX >= 0 && extraX < GAME_CONSTANTS.NB_COLUMNS) {
+        tiles.push({ x: extraX, y: y });
+      }
+    }
+    
+    return tiles;
+  }, []);
+
   // Generate initial tiles synchronously to prevent race condition at startup
   const generateInitialTiles = useCallback(() => {
     try {
       const initialTiles: TileCoordinate[] = [];
       
       // Starting position (center of track, aligned with ship)
-      let lastX = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2); // Position 3
+      let centerX = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2); // Position 3
       let lastY = gameStateRef.current.currentYLoop + 1; // Start at Y = 1
       
-      // Generate initial set of tiles to ensure ship has a path
+      // Generate initial set of route segments to ensure ship has a coherent path
       for (let i = 0; i < GAME_CONSTANTS.MIN_TILES; i++) {
-        // For the first few tiles, keep path straight to ensure ship can start safely
+        const routeWidth = Math.random() < 0.7 ? 2 : 3; // 70% chance of width 2, 30% chance of width 3
+        
+        // For the first few segments, keep path straight to ensure ship can start safely
         if (i < 3) {
-          // Keep first 3 tiles straight (no random movement)
-          initialTiles.push({ x: lastX, y: lastY });
+          // Keep first 3 segments straight (no random movement)
+          const segmentTiles = generateRouteSegment(centerX, lastY, routeWidth);
+          initialTiles.push(...segmentTiles);
         } else {
-          // After first 3 tiles, allow random path generation
-          const randomStep = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
-          lastX = Math.max(0, Math.min(GAME_CONSTANTS.NB_COLUMNS - 1, lastX + randomStep));
-          initialTiles.push({ x: lastX, y: lastY });
+          // After first 3 segments, allow smooth path generation
+          // Use smoother movement instead of pure random walk
+          const moveChance = Math.random();
+          let movement = 0;
+          
+          if (moveChance < 0.3) {
+            movement = -1; // Move left
+          } else if (moveChance < 0.6) {
+            movement = 1;  // Move right
+          }
+          // else movement = 0 (go straight)
+          
+          // Apply movement with bounds checking
+          const newCenterX = Math.max(1, Math.min(GAME_CONSTANTS.NB_COLUMNS - 2, centerX + movement));
+          centerX = newCenterX;
+          
+          const segmentTiles = generateRouteSegment(centerX, lastY, routeWidth);
+          initialTiles.push(...segmentTiles);
         }
         lastY++;
       }
@@ -156,17 +199,16 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
       // Set tiles immediately (synchronous)
       setTilesCoordinates(initialTiles);
       
-      console.log(`Generated ${initialTiles.length} initial tiles, starting at position (${initialTiles[0]?.x}, ${initialTiles[0]?.y})`);
+      console.log(`Generated ${initialTiles.length} initial tiles in ${GAME_CONSTANTS.MIN_TILES} segments, starting at center position ${Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2)}`);
       
     } catch (error) {
       console.error("Error generating initial tiles:", error);
-      // Fallback: ensure at least one tile exists where ship starts
-      setTilesCoordinates([{ 
-        x: Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2), 
-        y: gameStateRef.current.currentYLoop + 1 
-      }]);
+      // Fallback: ensure at least a multi-tile segment exists where ship starts
+      const fallbackCenter = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2);
+      const fallbackTiles = generateRouteSegment(fallbackCenter, gameStateRef.current.currentYLoop + 1, 2);
+      setTilesCoordinates(fallbackTiles);
     }
-  }, []);
+  }, [generateRouteSegment]);
 
   // Initialize game controllers
   useEffect(() => {
@@ -203,30 +245,63 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
     };
   }, [generateInitialTiles]);
 
-  // Optimized tile generation with memoization and performance improvements
+  // Optimized tile generation with multi-tile width route segments
   const generateTilesCoordinates = useCallback(() => {
     setTilesCoordinates((prevTiles) => {
       try {
         // Filter tiles efficiently without creating intermediate arrays
         const validTiles = prevTiles.filter((tile) => tile.y >= gameStateRef.current.currentYLoop);
         
-        // Calculate how many new tiles we need
-        const tilesNeeded = GAME_CONSTANTS.MIN_TILES - validTiles.length;
-        if (tilesNeeded <= 0) return prevTiles;
+        // Count segments instead of individual tiles to determine how many we need
+        const segmentsByY = new Map<number, TileCoordinate[]>();
+        validTiles.forEach(tile => {
+          if (!segmentsByY.has(tile.y)) {
+            segmentsByY.set(tile.y, []);
+          }
+          segmentsByY.get(tile.y)!.push(tile);
+        });
+        
+        const segmentsNeeded = GAME_CONSTANTS.MIN_TILES - segmentsByY.size;
+        if (segmentsNeeded <= 0) return prevTiles;
 
-        // Get last position for continuity
-        const lastTile = validTiles[validTiles.length - 1];
-        let lastX = lastTile ? lastTile.x : Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2);
-        let lastY = gameStateRef.current.currentYLoop + 1;
+        // Find the last segment's center position for continuity
+        const lastSegmentY = Math.max(...Array.from(segmentsByY.keys()));
+        const lastSegmentTiles = segmentsByY.get(lastSegmentY) || [];
+        
+        // Calculate center of last segment for smooth continuation
+        let centerX: number;
+        if (lastSegmentTiles.length > 0) {
+          const minX = Math.min(...lastSegmentTiles.map(t => t.x));
+          const maxX = Math.max(...lastSegmentTiles.map(t => t.x));
+          centerX = Math.floor((minX + maxX) / 2);
+        } else {
+          centerX = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2);
+        }
+        
+        let nextY = lastSegmentY + 1;
 
-        // Generate new tiles more efficiently
+        // Generate new route segments
         const newTiles: TileCoordinate[] = [];
-        for (let i = 0; i < tilesNeeded; i++) {
-          // Smoother path generation with controlled randomness
-          const randomStep = Math.floor(Math.random() * 3) - 1;
-          lastX = Math.max(0, Math.min(GAME_CONSTANTS.NB_COLUMNS - 1, lastX + randomStep));
-          newTiles.push({ x: lastX, y: lastY });
-          lastY++;
+        for (let i = 0; i < segmentsNeeded; i++) {
+          const routeWidth = Math.random() < 0.7 ? 2 : 3; // 70% chance of width 2, 30% chance of width 3
+          
+          // Smooth path generation with controlled movement
+          const moveChance = Math.random();
+          let movement = 0;
+          
+          if (moveChance < 0.25) {
+            movement = -1; // Move left
+          } else if (moveChance < 0.5) {
+            movement = 1;  // Move right
+          }
+          // else movement = 0 (go straight) - 50% chance to go straight for smoother paths
+          
+          // Apply movement with bounds checking to keep route in playable area
+          centerX = Math.max(1, Math.min(GAME_CONSTANTS.NB_COLUMNS - 2, centerX + movement));
+          
+          const segmentTiles = generateRouteSegment(centerX, nextY, routeWidth);
+          newTiles.push(...segmentTiles);
+          nextY++;
         }
 
         return [...validTiles, ...newTiles];
@@ -235,7 +310,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         return prevTiles; // Return previous state on error
       }
     });
-  }, []);
+  }, [generateRouteSegment]);
 
   // Handle collision events
   const handleCollision = useCallback((gameState: GameState, collision: CollisionResult) => {

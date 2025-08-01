@@ -80,15 +80,28 @@ export class CollisionDetector {
         );
         
         if (nearbyTiles.length === 0) {
-          // No tiles at all - this is likely game start or serious issue
-          // Give it minor severity to allow for tile generation catch-up
-          return {
-            hasCollision: true,
-            collisionType: 'off-track',
-            distance: 0,
-            position: { x: shipPosition, y: shipY },
-            severity: 'minor', // Changed from 'fatal' to allow recovery
-          };
+          // No tiles at all - check if this is game startup or actual off-track
+          const totalTileCount = pathTiles.length;
+          
+          if (totalTileCount < 5) {
+            // Likely game startup - be more forgiving
+            return {
+              hasCollision: true,
+              collisionType: 'off-track',
+              distance: 0,
+              position: { x: shipPosition, y: shipY },
+              severity: 'minor', // Allow recovery during startup
+            };
+          } else {
+            // Game is running normally - ship is seriously off track
+            return {
+              hasCollision: true,
+              collisionType: 'off-track',
+              distance: 0,
+              position: { x: shipPosition, y: shipY },
+              severity: 'major', // Lose a life for being completely off track
+            };
+          }
         } else {
           // There are tiles nearby, this is just a gap - no collision yet
           return {
