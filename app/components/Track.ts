@@ -290,17 +290,6 @@ const drawMountainSilhouette = (
   context.fill();
 };
 
-/**
- * Draws the track background with perspective gradient (legacy for compatibility)
- */
-const drawTrackBackground = (
-  context: CanvasRenderingContext2D,
-  width: number,
-  height: number
-): void => {
-  // This function is now replaced by drawParallaxBackground but kept for compatibility
-  drawParallaxBackground(context, width, height, 1, 0);
-};
 
 /**
  * Draws the main track surface

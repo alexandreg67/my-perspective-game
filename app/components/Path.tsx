@@ -3,6 +3,7 @@ import {
   createRacingPerspectiveConfig,
   calculatePerspectiveScale 
 } from "../utils/perspective";
+import { LODSystem } from "../utils/LODSystem";
 
 interface PathProps {
   context: CanvasRenderingContext2D;
@@ -11,6 +12,7 @@ interface PathProps {
   currentYLoop: number;
   nbColumns: number;
   tilesCoordinates: { x: number; y: number }[];
+  frameTime?: number; // For LOD adaptive quality
 }
 
 interface TileCoordinate {
@@ -35,8 +37,8 @@ interface PathConfig {
 
 // Path configuration constants
 const PATH_CONFIG: PathConfig = {
-  tileSpacing: 0.12, // Match Game.tsx spacing for consistency
-  cullingMargin: 120, // Increased for better performance with more tiles
+  tileSpacing: 0.10, // Match Game.tsx spacing for better visibility
+  cullingMargin: 200, // Increased significantly for LOD system
   colors: {
     primary: "#3b82f6", // Blue
     secondary: "#1e40af", // Dark blue  
@@ -48,6 +50,14 @@ const PATH_CONFIG: PathConfig = {
     alternatingPattern: true,
   },
 };
+
+// Global LOD system instance
+const lodSystem = new LODSystem({
+  nearDistance: 500,
+  farDistance: 1200,
+  adaptiveQuality: true,
+  targetFrameTime: 16.67
+});
 
 /**
  * Validates path rendering parameters
@@ -93,7 +103,7 @@ const calculateTileScreenY = (
 };
 
 /**
- * Renders a single path tile with perspective and visual effects
+ * Renders a single path tile with perspective, visual effects, and LOD optimization
  */
 const renderTile = (
   context: CanvasRenderingContext2D,
@@ -109,11 +119,17 @@ const renderTile = (
     const { x } = tile;
     const tileHeight = PATH_CONFIG.tileSpacing * height;
     
-    // Calculate perspective scale for this tile
+    // Calculate perspective scale and distance for this tile
     const z = Math.max(0, height - lineY);
     const perspectiveScale = calculatePerspectiveScale(z, height * 0.8);
+    const distance = z; // Use z as distance for LOD calculations
     
-    // Apply perspective transformation to tile corners
+    // Get LOD parameters for this distance
+    const renderParams = lodSystem.getTileRenderParams(distance);
+    if (!renderParams.shouldRender) return;
+
+    // Apply perspective transformation to tile corners with LOD simplification
+    const simplification = renderParams.simplification;
     const [x1, y1] = transformPerspective(
       x * spacingX,
       lineY,
@@ -130,14 +146,14 @@ const renderTile = (
     );
     const [x3, y3] = transformPerspective(
       (x + 1) * spacingX,
-      lineY - tileHeight,
+      lineY - tileHeight * simplification,
       perspectivePointX,
       perspectivePointY,
       height
     );
     const [x4, y4] = transformPerspective(
       x * spacingX,
-      lineY - tileHeight,
+      lineY - tileHeight * simplification,
       perspectivePointX,
       perspectivePointY,
       height
@@ -145,9 +161,12 @@ const renderTile = (
 
     // Skip rendering if tile is too small or deformed
     const tileArea = Math.abs((x2 - x1) * (y1 - y4));
-    if (tileArea < 2) return;
+    if (tileArea < 1) return;
 
     context.save();
+    
+    // Apply LOD-based alpha for atmospheric fading
+    context.globalAlpha = renderParams.alpha;
     
     // Create tile path
     context.beginPath();
@@ -157,8 +176,8 @@ const renderTile = (
     context.lineTo(x4, y4);
     context.closePath();
 
-    // Apply visual effects based on configuration
-    if (PATH_CONFIG.visualEffects.enableGradient) {
+    // Apply visual effects based on LOD configuration
+    if (PATH_CONFIG.visualEffects.enableGradient && renderParams.lod.renderGradients) {
       // Create gradient effect for depth
       const gradient = context.createLinearGradient(x1, y1, x4, y4);
       const primaryColor = PATH_CONFIG.visualEffects.alternatingPattern && tileIndex % 2 === 0
@@ -169,19 +188,27 @@ const renderTile = (
       gradient.addColorStop(1, PATH_CONFIG.colors.secondary);
       context.fillStyle = gradient;
     } else {
-      // Simple color fill
-      context.fillStyle = PATH_CONFIG.visualEffects.alternatingPattern && tileIndex % 2 === 0
+      // Simple color fill for distant tiles
+      const baseColor = PATH_CONFIG.visualEffects.alternatingPattern && tileIndex % 2 === 0
         ? PATH_CONFIG.colors.secondary
         : PATH_CONFIG.colors.primary;
+      
+      // Apply atmospheric fog effect for distant tiles
+      if (distance > 800) {
+        const fogAmount = Math.min((distance - 800) / 400, 0.6);
+        context.fillStyle = `rgba(100, 120, 150, ${(1 - fogAmount) * renderParams.alpha})`;
+      } else {
+        context.fillStyle = baseColor;
+      }
     }
     
     context.fill();
 
-    // Add border if enabled and tile is large enough
-    if (PATH_CONFIG.visualEffects.enableBorder && perspectiveScale > 0.1) {
+    // Add border if enabled by LOD and tile is large enough
+    if (PATH_CONFIG.visualEffects.enableBorder && renderParams.lod.renderBorders && perspectiveScale > 0.05) {
       context.strokeStyle = PATH_CONFIG.colors.border;
-      context.lineWidth = Math.max(0.5, perspectiveScale * 2);
-      context.globalAlpha = 0.8;
+      context.lineWidth = Math.max(0.3, perspectiveScale * 2 * simplification);
+      context.globalAlpha = renderParams.alpha * 0.8;
       context.stroke();
     }
 
@@ -202,8 +229,12 @@ export default function Path({
   currentYLoop,
   nbColumns,
   tilesCoordinates,
+  frameTime = 16.67
 }: PathProps) {
   try {
+    // Update LOD system with current frame performance
+    lodSystem.update(16.67, frameTime);
+
     // Validate parameters
     if (!validatePathParams({ context, canvasSize, currentOffsetY, currentYLoop, nbColumns, tilesCoordinates })) {
       return null;
@@ -226,8 +257,9 @@ export default function Path({
     // Track performance metrics in development
     let tilesRendered = 0;
     let tilesCulled = 0;
+    let tilesLODCulled = 0;
 
-    // Optimized rendering loop with early exit for off-screen tiles
+    // Optimized rendering loop with early exit for off-screen tiles and LOD culling
     tilesCoordinates.forEach((tile, index) => {
       try {
         const lineY = calculateTileScreenY(tile.y, currentYLoop, currentOffsetY, height);
@@ -238,13 +270,20 @@ export default function Path({
           return;
         }
 
+        // Calculate distance for LOD culling
+        const z = Math.max(0, height - lineY);
+        if (!lodSystem.shouldRender(z)) {
+          tilesLODCulled++;
+          return;
+        }
+
         // Validate tile coordinates
         if (tile.x < 0 || tile.x >= nbColumns) {
           console.warn(`Invalid tile x coordinate: ${tile.x}`);
           return;
         }
 
-        // Render the tile
+        // Render the tile with LOD optimizations
         renderTile(
           context,
           tile,
@@ -265,9 +304,12 @@ export default function Path({
 
     // Log performance metrics in development
     if (process.env.NODE_ENV === 'development' && tilesRendered > 0) {
-      const cullingEfficiency = (tilesCulled / (tilesRendered + tilesCulled)) * 100;
-      if (cullingEfficiency < 30) {
-        console.debug(`Path culling efficiency: ${cullingEfficiency.toFixed(1)}% (${tilesCulled}/${tilesRendered + tilesCulled})`);
+      const totalTiles = tilesRendered + tilesCulled + tilesLODCulled;
+      const cullingEfficiency = ((tilesCulled + tilesLODCulled) / totalTiles) * 100;
+      const lodStats = lodSystem.getStats();
+      
+      if (cullingEfficiency < 30 || frameTime > 20) {
+        console.debug(`Path rendering - Tiles: ${tilesRendered}/${totalTiles}, Culling: ${cullingEfficiency.toFixed(1)}%, LOD Level: ${lodStats.currentQualityLevel}, Frame: ${frameTime.toFixed(2)}ms`);
       }
     }
 

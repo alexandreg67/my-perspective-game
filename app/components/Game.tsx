@@ -8,6 +8,7 @@ import { clearPerspectiveCache } from "../utils/perspective";
 import { PlayerController } from "../utils/PlayerController";
 import { CollisionDetector, CollisionResult } from "../utils/CollisionDetection";
 import { ParticleSystem } from "../utils/ParticleSystem";
+import { SpeedProgressionSystem } from "../utils/SpeedProgressionSystem";
 
 interface GameProps {
   showShip: boolean;
@@ -33,12 +34,15 @@ interface TileCoordinate {
 const GAME_CONSTANTS = {
   NB_COLUMNS: 7,
   SCROLL_SPEED: 240, // pixels per second
-  TILE_SPACING_Y: 0.12, // Reduced for denser track appearance
-  MIN_TILES: 20, // Increased for better forward visibility
-  MAX_TILES: 30, // Increased for smoother generation
+  TILE_SPACING_Y: 0.10, // Reduced further for better visibility depth
+  MIN_TILES: 60, // Significantly increased for much better forward visibility (5-6 seconds)
+  MAX_TILES: 80, // Increased for smoother generation with LOD
   DEFAULT_CANVAS_WIDTH: 900,
   DEFAULT_CANVAS_HEIGHT: 400,
   TARGET_FPS: 60,
+  VISIBILITY_DISTANCE: 2000, // Maximum visible distance in pixels
+  LOD_NEAR_DISTANCE: 500, // High detail distance
+  LOD_FAR_DISTANCE: 1200, // Low detail distance
 } as const;
 
 const Game: React.FC<GameProps> = ({ showShip }) => {
@@ -60,6 +64,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
   const playerControllerRef = useRef<PlayerController>(new PlayerController());
   const collisionDetectorRef = useRef<CollisionDetector>(new CollisionDetector());
   const particleSystemRef = useRef<ParticleSystem | null>(null);
+  const speedSystemRef = useRef<SpeedProgressionSystem>(new SpeedProgressionSystem('arcade'));
 
   // Canvas context state
   const [context, setContext] = useState<CanvasRenderingContext2D | null>(null);
@@ -245,10 +250,12 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
       setGameError("Failed to initialize game controllers");
     }
 
+    // Capture the controller reference for cleanup
+    const controller = playerControllerRef.current;
+    
     // Cleanup function
     return () => {
       try {
-        const controller = playerControllerRef.current;
         if (controller) {
           controller.cleanup();
         }
@@ -256,7 +263,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         console.error("Error cleaning up game controllers:", error);
       }
     };
-  }, [generateInitialTiles]);
+  }, [generateInitialTiles, canvasSize]);
 
   // Optimized tile generation with multi-tile width route segments
   const generateTilesCoordinates = useCallback(() => {
@@ -524,15 +531,26 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
             currentState.lastCollision = null;
           }
 
-          // Update speed based on progress (progressive difficulty)
-          const baseSpeed = GAME_CONSTANTS.SCROLL_SPEED;
-          const speedIncrease = Math.floor(currentState.score / 500) * 20; // Increase every 500 points
-          currentState.speed = Math.min(baseSpeed + speedIncrease, baseSpeed * 2); // Cap at 2x speed
+          // Update progressive speed system
+          const isOnTrack = !collisionResult.hasCollision || collisionResult.severity === 'none';
+          speedSystemRef.current.update(deltaTime, isOnTrack, currentState.score);
+          currentState.speed = speedSystemRef.current.getCurrentSpeed();
+
+          // Handle perfect turns and near misses for skill bonuses
+          if (isOnTrack && Math.abs(playerState.position - Math.floor(playerState.position + 0.5)) < 0.1) {
+            // Player is very close to lane center - record perfect turn
+            speedSystemRef.current.recordPerfectTurn();
+          }
+
+          // Reset combo on collision
+          if (collisionResult.hasCollision && collisionResult.severity !== 'none') {
+            speedSystemRef.current.resetCombo();
+          }
 
           // Update particle system
           if (particleSystemRef.current) {
-            const isOnTrack = !collisionResult.hasCollision || collisionResult.severity === 'none';
-            const isBoosting = false; // TODO: Add boost mechanics later
+            const speedState = speedSystemRef.current.getState();
+            const isBoosting = speedState.boostTimeRemaining > 0;
             
             particleSystemRef.current.update(
               deltaTime,
