@@ -35,8 +35,8 @@ interface PathConfig {
 
 // Path configuration constants
 const PATH_CONFIG: PathConfig = {
-  tileSpacing: 0.15,
-  cullingMargin: 100,
+  tileSpacing: 0.12, // Match Game.tsx spacing for consistency
+  cullingMargin: 120, // Increased for better performance with more tiles
   colors: {
     primary: "#3b82f6", // Blue
     secondary: "#1e40af", // Dark blue  

@@ -3,9 +3,11 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import Path from "./Path";
 import Ship from "./Ship";
+import Track from "./Track";
 import { clearPerspectiveCache } from "../utils/perspective";
 import { PlayerController } from "../utils/PlayerController";
 import { CollisionDetector, CollisionResult } from "../utils/CollisionDetection";
+import { ParticleSystem } from "../utils/ParticleSystem";
 
 interface GameProps {
   showShip: boolean;
@@ -31,9 +33,9 @@ interface TileCoordinate {
 const GAME_CONSTANTS = {
   NB_COLUMNS: 7,
   SCROLL_SPEED: 240, // pixels per second
-  TILE_SPACING_Y: 0.15,
-  MIN_TILES: 16,
-  MAX_TILES: 24,
+  TILE_SPACING_Y: 0.12, // Reduced for denser track appearance
+  MIN_TILES: 20, // Increased for better forward visibility
+  MAX_TILES: 30, // Increased for smoother generation
   DEFAULT_CANVAS_WIDTH: 900,
   DEFAULT_CANVAS_HEIGHT: 400,
   TARGET_FPS: 60,
@@ -57,6 +59,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
   // Game controllers
   const playerControllerRef = useRef<PlayerController>(new PlayerController());
   const collisionDetectorRef = useRef<CollisionDetector>(new CollisionDetector());
+  const particleSystemRef = useRef<ParticleSystem | null>(null);
 
   // Canvas context state
   const [context, setContext] = useState<CanvasRenderingContext2D | null>(null);
@@ -85,6 +88,12 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
           if (prevSize.width !== width || prevSize.height !== height) {
             // Clear perspective cache when canvas size changes
             clearPerspectiveCache();
+            
+            // Update particle system canvas size
+            if (particleSystemRef.current) {
+              particleSystemRef.current.updateCanvasSize({ width, height });
+            }
+            
             return { width, height };
           }
           return prevSize;
@@ -129,10 +138,13 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
     }
   }, []);
 
-  // Generate multi-tile width route segments for coherent path
+  // Generate multi-tile width route segments for coherent path (max 3 tiles wide)
   const generateRouteSegment = useCallback((centerX: number, y: number, width: number = 2): TileCoordinate[] => {
     const tiles: TileCoordinate[] = [];
-    const halfWidth = Math.floor(width / 2);
+    
+    // Ensure width doesn't exceed 3 tiles
+    const constrainedWidth = Math.min(3, Math.max(1, width));
+    const halfWidth = Math.floor(constrainedWidth / 2);
     
     // Create tiles around the center position
     for (let offset = -halfWidth; offset <= halfWidth; offset++) {
@@ -140,15 +152,6 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
       // Ensure tile is within bounds
       if (tileX >= 0 && tileX < GAME_CONSTANTS.NB_COLUMNS) {
         tiles.push({ x: tileX, y: y });
-      }
-    }
-    
-    // If we have odd width and room, add one more tile randomly to left or right
-    if (width % 2 === 1 && width > 2) {
-      const extraOffset = Math.random() < 0.5 ? -halfWidth - 1 : halfWidth + 1;
-      const extraX = centerX + extraOffset;
-      if (extraX >= 0 && extraX < GAME_CONSTANTS.NB_COLUMNS) {
-        tiles.push({ x: extraX, y: y });
       }
     }
     
@@ -166,7 +169,7 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
       
       // Generate initial set of route segments to ensure ship has a coherent path
       for (let i = 0; i < GAME_CONSTANTS.MIN_TILES; i++) {
-        const routeWidth = Math.random() < 0.7 ? 2 : 3; // 70% chance of width 2, 30% chance of width 3
+        const routeWidth = Math.random() < 0.3 ? 2 : 3; // 30% chance of width 2, 70% chance of width 3
         
         // For the first few segments, keep path straight to ensure ship can start safely
         if (i < 3) {
@@ -174,19 +177,19 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
           const segmentTiles = generateRouteSegment(centerX, lastY, routeWidth);
           initialTiles.push(...segmentTiles);
         } else {
-          // After first 3 segments, allow smooth path generation
-          // Use smoother movement instead of pure random walk
+          // After first 3 segments, allow smooth path generation with varied movement
           const moveChance = Math.random();
           let movement = 0;
           
-          if (moveChance < 0.3) {
-            movement = -1; // Move left
-          } else if (moveChance < 0.6) {
-            movement = 1;  // Move right
+          if (moveChance < 0.2) {
+            movement = -1; // Move left (20%)
+          } else if (moveChance < 0.4) {
+            movement = 1;  // Move right (20%)
           }
-          // else movement = 0 (go straight)
+          // else movement = 0 (go straight - 60% for smoother paths)
           
-          // Apply movement with bounds checking
+          // Apply movement with bounds checking - allow more track width usage
+          // With max 3-tile width, center can be from 1 to 5 (tiles 0-6 available)
           const newCenterX = Math.max(1, Math.min(GAME_CONSTANTS.NB_COLUMNS - 2, centerX + movement));
           centerX = newCenterX;
           
@@ -222,6 +225,16 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         maxX: GAME_CONSTANTS.NB_COLUMNS - 1, // Valid positions: 0 to 6
         minY: 0,
         maxY: Number.MAX_SAFE_INTEGER,
+      });
+
+      // Initialize particle system
+      particleSystemRef.current = new ParticleSystem(canvasSize, {
+        maxParticles: 150,
+        spawnRate: 0.8,
+        speedThreshold: 180,
+        enableSpeedLines: true,
+        enableSparks: true,
+        enableDust: true,
       });
 
       // Generate initial tiles synchronously to prevent race condition
@@ -283,20 +296,21 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         // Generate new route segments
         const newTiles: TileCoordinate[] = [];
         for (let i = 0; i < segmentsNeeded; i++) {
-          const routeWidth = Math.random() < 0.7 ? 2 : 3; // 70% chance of width 2, 30% chance of width 3
+          const routeWidth = Math.random() < 0.3 ? 2 : 3; // 30% chance of width 2, 70% chance of width 3
           
-          // Smooth path generation with controlled movement
+          // Smooth path generation with controlled movement for variety
           const moveChance = Math.random();
           let movement = 0;
           
-          if (moveChance < 0.25) {
-            movement = -1; // Move left
-          } else if (moveChance < 0.5) {
-            movement = 1;  // Move right
+          if (moveChance < 0.2) {
+            movement = -1; // Move left (20%)
+          } else if (moveChance < 0.4) {
+            movement = 1;  // Move right (20%)
           }
-          // else movement = 0 (go straight) - 50% chance to go straight for smoother paths
+          // else movement = 0 (go straight - 60% for smoother, more natural paths)
           
-          // Apply movement with bounds checking to keep route in playable area
+          // Apply movement with bounds checking - allow more track width usage
+          // With max 3-tile width, center can be from 1 to 5 (tiles 0-6 available)
           centerX = Math.max(1, Math.min(GAME_CONSTANTS.NB_COLUMNS - 2, centerX + movement));
           
           const segmentTiles = generateRouteSegment(centerX, nextY, routeWidth);
@@ -392,6 +406,11 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
         initialState.shipPosition,
         GAME_CONSTANTS.NB_COLUMNS
       );
+      
+      // Clear particle system
+      if (particleSystemRef.current) {
+        particleSystemRef.current.clear();
+      }
       
       // Generate initial tiles synchronously to prevent race condition
       generateInitialTiles();
@@ -509,6 +528,20 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
           const baseSpeed = GAME_CONSTANTS.SCROLL_SPEED;
           const speedIncrease = Math.floor(currentState.score / 500) * 20; // Increase every 500 points
           currentState.speed = Math.min(baseSpeed + speedIncrease, baseSpeed * 2); // Cap at 2x speed
+
+          // Update particle system
+          if (particleSystemRef.current) {
+            const isOnTrack = !collisionResult.hasCollision || collisionResult.severity === 'none';
+            const isBoosting = false; // TODO: Add boost mechanics later
+            
+            particleSystemRef.current.update(
+              deltaTime,
+              currentState.speed,
+              currentState.shipPosition,
+              isOnTrack,
+              isBoosting
+            );
+          }
         }
 
         // Update React state periodically (not every frame for performance)
@@ -521,6 +554,18 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
 
         // Render game objects with error handling
         try {
+          // Draw parallax background and track base
+          Track({
+            context,
+            canvasSize,
+            nbColumns: GAME_CONSTANTS.NB_COLUMNS,
+            showBackground: true,
+            showGridLines: false,
+            showCenterLine: false,
+            gameSpeed: currentState.speed / GAME_CONSTANTS.SCROLL_SPEED,
+            scrollOffset: currentState.currentOffsetY + (currentState.currentYLoop * canvasSize.height * GAME_CONSTANTS.TILE_SPACING_Y)
+          });
+
           // Draw path tiles
           Path({
             context,
@@ -530,6 +575,11 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
             nbColumns: GAME_CONSTANTS.NB_COLUMNS,
             tilesCoordinates,
           });
+
+          // Draw particles (before ship for proper layering)
+          if (particleSystemRef.current) {
+            particleSystemRef.current.render(context);
+          }
 
           // Draw ship if enabled
           if (showShip) {
@@ -674,6 +724,9 @@ const Game: React.FC<GameProps> = ({ showShip }) => {
           <div>Y Loop: {gameState.currentYLoop}</div>
           <div>Offset: {Math.round(gameState.currentOffsetY)}</div>
           <div>Tiles: {tilesCoordinates.length}</div>
+          {particleSystemRef.current && (
+            <div>Particles: {particleSystemRef.current.getParticleCount()}</div>
+          )}
           {gameState.lastCollision && (
             <div>Collision: {gameState.lastCollision.collisionType} ({gameState.lastCollision.severity})</div>
           )}

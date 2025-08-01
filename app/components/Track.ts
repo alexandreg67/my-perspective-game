@@ -11,6 +11,17 @@ interface TrackProps {
   showBackground?: boolean;
   showGridLines?: boolean;
   showCenterLine?: boolean;
+  gameSpeed?: number;
+  scrollOffset?: number;
+}
+
+interface ParallaxLayer {
+  name: string;
+  scrollSpeed: number;
+  depth: number;
+  opacity: number;
+  color: string;
+  pattern?: 'stars' | 'clouds' | 'mountains' | 'none';
 }
 
 interface TrackConfig {
@@ -54,6 +65,42 @@ const TRACK_CONFIG: TrackConfig = {
   },
 };
 
+// Parallax background layers configuration
+const PARALLAX_LAYERS: ParallaxLayer[] = [
+  {
+    name: 'distant_stars',
+    scrollSpeed: 0.05,
+    depth: 1000,
+    opacity: 0.4,
+    color: '#ffffff',
+    pattern: 'stars'
+  },
+  {
+    name: 'nebula',
+    scrollSpeed: 0.1,
+    depth: 800,
+    opacity: 0.3,
+    color: '#4a5568',
+    pattern: 'clouds'
+  },
+  {
+    name: 'distant_mountains',
+    scrollSpeed: 0.2,
+    depth: 600,
+    opacity: 0.6,
+    color: '#2d3748',
+    pattern: 'mountains'
+  },
+  {
+    name: 'atmosphere',
+    scrollSpeed: 0.4,
+    depth: 400,
+    opacity: 0.2,
+    color: '#1a365d',
+    pattern: 'none'
+  }
+];
+
 /**
  * Validates track rendering parameters
  */
@@ -74,32 +121,185 @@ const validateTrackParams = (props: TrackProps): boolean => {
 };
 
 /**
- * Draws the track background with perspective gradient
+ * Renders parallax background layers for depth effect
+ */
+const drawParallaxBackground = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  gameSpeed: number = 1,
+  scrollOffset: number = 0
+): void => {
+  try {
+    // Draw base background first
+    const baseGradient = context.createLinearGradient(0, 0, 0, height);
+    baseGradient.addColorStop(0, "#000611"); // Deep space at top
+    baseGradient.addColorStop(0.4, "#001122"); // Main background color
+    baseGradient.addColorStop(1, "#002244"); // Slightly lighter at bottom
+    
+    context.fillStyle = baseGradient;
+    context.fillRect(0, 0, width, height);
+
+    // Render each parallax layer
+    PARALLAX_LAYERS.forEach(layer => {
+      drawParallaxLayer(context, layer, width, height, gameSpeed, scrollOffset);
+    });
+    
+  } catch (error) {
+    console.error("Error drawing parallax background:", error);
+  }
+};
+
+/**
+ * Draws a single parallax layer
+ */
+const drawParallaxLayer = (
+  context: CanvasRenderingContext2D,
+  layer: ParallaxLayer,
+  width: number,
+  height: number,
+  gameSpeed: number,
+  scrollOffset: number
+): void => {
+  try {
+    context.save();
+    context.globalAlpha = layer.opacity;
+    
+    const layerOffset = (scrollOffset * layer.scrollSpeed * gameSpeed) % height;
+    
+    switch (layer.pattern) {
+      case 'stars':
+        drawStarField(context, width, height, layerOffset, layer.color);
+        break;
+      case 'clouds':
+        drawCloudLayer(context, width, height, layerOffset, layer.color);
+        break;
+      case 'mountains':
+        drawMountainSilhouette(context, width, height, layerOffset, layer.color);
+        break;
+      default:
+        // Simple color layer
+        context.fillStyle = layer.color;
+        context.fillRect(0, 0, width, height * 0.4);
+        break;
+    }
+    
+  } catch (error) {
+    console.error(`Error drawing parallax layer ${layer.name}:`, error);
+  } finally {
+    context.restore();
+  }
+};
+
+/**
+ * Draws animated star field
+ */
+const drawStarField = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  offset: number,
+  color: string
+): void => {
+  context.fillStyle = color;
+  
+  // Generate consistent star positions using simple hash
+  for (let i = 0; i < 100; i++) {
+    const seed = i * 73856093;
+    const x = (seed % width);
+    const y = ((seed * 19349663) % (height * 2) + offset) % (height * 2);
+    
+    if (y < height && y > 0) {
+      const size = ((seed * 83492791) % 3) + 1;
+      const brightness = 0.3 + ((seed * 39916801) % 70) / 100;
+      
+      context.globalAlpha *= brightness;
+      context.fillRect(x, y, size, size);
+      context.globalAlpha /= brightness;
+    }
+  }
+};
+
+/**
+ * Draws scrolling cloud layer
+ */
+const drawCloudLayer = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  offset: number,
+  color: string
+): void => {
+  context.fillStyle = color;
+  
+  // Draw soft cloud shapes
+  for (let i = 0; i < 20; i++) {
+    const seed = i * 127773;
+    const x = (seed % (width + 200)) - 100;
+    const y = ((seed * 16777619) % (height * 3) + offset) % (height * 3);
+    
+    if (y < height * 0.6 && y > -50) {
+      const cloudWidth = 80 + ((seed * 2147483647) % 60);
+      const cloudHeight = 20 + ((seed * 1103515245) % 30);
+      
+      context.beginPath();
+      context.ellipse(x, y, cloudWidth, cloudHeight, 0, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+};
+
+/**
+ * Draws distant mountain silhouettes
+ */
+const drawMountainSilhouette = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  offset: number,
+  color: string
+): void => {
+  context.fillStyle = color;
+  
+  // Draw mountain peaks
+  const peakCount = 8;
+  const baseY = height * 0.4;
+  
+  context.beginPath();
+  context.moveTo(0, baseY);
+  
+  for (let i = 0; i <= peakCount; i++) {
+    const x = (i / peakCount) * width;
+    const peakHeight = 40 + Math.sin(i * 0.7 + offset * 0.01) * 30;
+    const y = baseY - peakHeight;
+    
+    if (i === 0) {
+      context.lineTo(x, y);
+    } else {
+      const prevX = ((i - 1) / peakCount) * width;
+      const midX = (prevX + x) / 2;
+      context.quadraticCurveTo(prevX, baseY - 10, midX, y);
+      context.quadraticCurveTo(midX, y, x, y);
+    }
+  }
+  
+  context.lineTo(width, baseY);
+  context.lineTo(width, height);
+  context.lineTo(0, height);
+  context.closePath();
+  context.fill();
+};
+
+/**
+ * Draws the track background with perspective gradient (legacy for compatibility)
  */
 const drawTrackBackground = (
   context: CanvasRenderingContext2D,
   width: number,
   height: number
 ): void => {
-  try {
-    if (!TRACK_CONFIG.effects.enableGradient) {
-      context.fillStyle = TRACK_CONFIG.colors.background;
-      context.fillRect(0, 0, width, height);
-      return;
-    }
-
-    // Create gradient from horizon to bottom
-    const gradient = context.createLinearGradient(0, height * 0.2, 0, height);
-    gradient.addColorStop(0, "#000814"); // Very dark blue at horizon
-    gradient.addColorStop(0.5, TRACK_CONFIG.colors.background);
-    gradient.addColorStop(1, "#003366"); // Slightly lighter at bottom
-    
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, width, height);
-    
-  } catch (error) {
-    console.error("Error drawing track background:", error);
-  }
+  // This function is now replaced by drawParallaxBackground but kept for compatibility
+  drawParallaxBackground(context, width, height, 1, 0);
 };
 
 /**
@@ -303,7 +503,9 @@ export default function Track({
   nbColumns,
   showBackground = true,
   showGridLines = true,
-  showCenterLine = true
+  showCenterLine = true,
+  gameSpeed = 1,
+  scrollOffset = 0
 }: TrackProps) {
   try {
     // Validate parameters
@@ -326,7 +528,7 @@ export default function Track({
 
     // Draw track layers in order (background to foreground)
     if (showBackground) {
-      drawTrackBackground(context, width, height);
+      drawParallaxBackground(context, width, height, gameSpeed, scrollOffset);
     }
     
     // Draw track surface
