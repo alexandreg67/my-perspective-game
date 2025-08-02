@@ -1,217 +1,771 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-
-// Fonction pour transformer la perspective correctement
-const transformPerspective = (
-  x: number,
-  y: number,
-  perspectivePointX: number,
-  perspectivePointY: number,
-  height: number
-): [number, number] => {
-  const linY = y / height; // On avance vers le bas de l'écran
-  const factorY = Math.pow(linY, 3); // Facteur de profondeur ajusté
-
-  const diffX = x - perspectivePointX; // Différence horizontale par rapport au centre
-  const offsetX = diffX * factorY; // Réduire la largeur en fonction de la profondeur
-
-  const trX = perspectivePointX + offsetX; // Appliquer la transformation horizontale
-  const trY = perspectivePointY + factorY * (height - perspectivePointY); // Appliquer la transformation verticale
-  return [trX, trY]; // Retourner les nouvelles coordonnées
-};
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import Path from "./Path";
+import Ship from "./Ship";
+import Track from "./Track";
+import { clearPerspectiveCache } from "../utils/perspective";
+import { PlayerController } from "../utils/PlayerController";
+import { CollisionDetector, CollisionResult } from "../utils/CollisionDetection";
+import { ParticleSystem } from "../utils/ParticleSystem";
+import { SpeedProgressionSystem } from "../utils/SpeedProgressionSystem";
 
 interface GameProps {
-  showShip: boolean; // Indiquer si le vaisseau doit être affiché
+  showShip: boolean;
 }
+
+interface GameState {
+  currentOffsetY: number;
+  currentYLoop: number;
+  shipPosition: number;
+  speed: number;
+  score: number;
+  lives: number;
+  gameStatus: 'playing' | 'paused' | 'gameOver' | 'menu';
+  lastCollision: CollisionResult | null;
+}
+
+interface TileCoordinate {
+  x: number;
+  y: number;
+}
+
+// Game constants - extracted to prevent magic numbers
+const GAME_CONSTANTS = {
+  NB_COLUMNS: 7,
+  SCROLL_SPEED: 240, // pixels per second
+  TILE_SPACING: 0.07, // Reduced further for better visibility depth
+  MIN_TILES: 100, // Significantly increased for much better forward visibility (5-6 seconds)
+  MAX_TILES: 120, // Increased for smoother generation with LOD
+  DEFAULT_CANVAS_WIDTH: 1000,
+  DEFAULT_CANVAS_HEIGHT: 600,
+  TARGET_FPS: 60,
+  VISIBILITY_DISTANCE: 4000, // Maximum visible distance in pixels
+  LOD_NEAR_DISTANCE: 700, // High detail distance
+  LOD_FAR_DISTANCE: 2000, // Low detail distance
+} as const;
 
 const Game: React.FC<GameProps> = ({ showShip }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const lastTimeRef = useRef<number>(0);
+  const gameStateRef = useRef<GameState>({
+    currentOffsetY: 0,
+    currentYLoop: 0,
+    shipPosition: Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2),
+    speed: GAME_CONSTANTS.SCROLL_SPEED,
+    score: 0,
+    lives: 3,
+    gameStatus: 'playing',
+    lastCollision: null,
+  });
+
+  // Game controllers
+  const playerControllerRef = useRef<PlayerController>(new PlayerController());
+  const collisionDetectorRef = useRef<CollisionDetector>(new CollisionDetector());
+  const particleSystemRef = useRef<ParticleSystem | null>(null);
+  const speedSystemRef = useRef<SpeedProgressionSystem>(new SpeedProgressionSystem('arcade'));
+
+  // Canvas context state
   const [context, setContext] = useState<CanvasRenderingContext2D | null>(null);
-  const [canvasSize, setCanvasSize] = useState({ width: 900, height: 400 });
-  const [shipPosition, setShipPosition] = useState(2); // Position du vaisseau sur la grille
-  const [currentOffsetY, setCurrentOffsetY] = useState(0);
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ 
+    width: GAME_CONSTANTS.DEFAULT_CANVAS_WIDTH, 
+    height: GAME_CONSTANTS.DEFAULT_CANVAS_HEIGHT 
+  });
+  
+  // Game state
+  const [gameState, setGameState] = useState<GameState>(gameStateRef.current);
+  const [tilesCoordinates, setTilesCoordinates] = useState<TileCoordinate[]>([]);
 
-  const nbColumns = 7; // Nombre de colonnes dans la grille
+  // Error handling state
+  const [gameError, setGameError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const updateCanvasSize = () => {
+  // Optimized canvas size handling with error handling
+  const updateCanvasSize = useCallback(() => {
+    try {
       const parent = canvasRef.current?.parentElement;
       if (parent) {
-        const width = parent.clientWidth;
-        const height = parent.clientHeight;
-        setCanvasSize({ width, height });
+        const width = Math.max(GAME_CONSTANTS.DEFAULT_CANVAS_WIDTH, parent.clientWidth);
+        const height = Math.max(GAME_CONSTANTS.DEFAULT_CANVAS_HEIGHT, parent.clientHeight);
+        
+        setCanvasSize(prevSize => {
+          // Only update if size actually changed to prevent unnecessary re-renders
+          if (prevSize.width !== width || prevSize.height !== height) {
+            // Clear perspective cache when canvas size changes
+            clearPerspectiveCache();
+            
+            // Update particle system canvas size
+            if (particleSystemRef.current) {
+              particleSystemRef.current.updateCanvasSize({ width, height });
+            }
+            
+            return { width, height };
+          }
+          return prevSize;
+        });
       }
-    };
-
-    updateCanvasSize();
-    window.addEventListener("resize", updateCanvasSize);
-
-    return () => window.removeEventListener("resize", updateCanvasSize);
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        setContext(ctx);
-      }
+    } catch (error) {
+      console.error("Error updating canvas size:", error);
+      setGameError("Failed to update canvas size");
     }
   }, []);
 
   useEffect(() => {
-    const draw = () => {
-      if (context) {
-        const { width, height } = canvasSize;
-        context.clearRect(0, 0, width, height);
+    updateCanvasSize();
+    window.addEventListener("resize", updateCanvasSize);
+    return () => window.removeEventListener("resize", updateCanvasSize);
+  }, [updateCanvasSize]);
 
-        const perspectivePointX = width / 2;
-        const perspectivePointY = height * 0.2;
-
-        const lineColor = "white";
-
-        // Dessiner les lignes verticales (grille)
-        const spacingX = width / nbColumns; // Largeur d'une colonne
-        context.beginPath();
-        context.strokeStyle = lineColor;
-
-        for (let i = 0; i <= nbColumns; i++) {
-          const lineX = i * spacingX;
-          const [x1, y1] = transformPerspective(
-            lineX,
-            height,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-          const [x2, y2] = transformPerspective(
-            lineX,
-            0,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-          context.moveTo(x1, y1);
-          context.lineTo(x2, y2);
-        }
-        context.stroke();
-
-        // Dessiner les lignes horizontales
-        const hNbLines = 8;
-        const hLineSpacing = 0.15;
-        const spacingY = hLineSpacing * height;
-        context.beginPath();
-        context.strokeStyle = lineColor;
-
-        for (let i = 0; i < hNbLines; i++) {
-          const lineY = height - i * spacingY + currentOffsetY;
-          const [x1, y1] = transformPerspective(
-            0,
-            lineY,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-          const [x2, y2] = transformPerspective(
-            width,
-            lineY,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-          context.moveTo(x1, y1);
-          context.lineTo(x2, y2);
-        }
-        context.stroke();
-
-        // Dessiner le vaisseau si `showShip` est vrai
-        if (showShip) {
-          // Placer le vaisseau encore plus proche de l'avant (plus en bas)
-          const shipBottomY = height - 0; // Placer le bas du vaisseau plus proche du bas
-          const shipTopY = height - 50; // Placer le haut légèrement au-dessus du bas
-
-          // Calculer les coordonnées en perspective pour le vaisseau
-          const shipLeftX = (shipPosition + 0) * spacingX; // Côté gauche de la case du vaisseau
-          const shipRightX = (shipPosition + 1) * spacingX; // Côté droit de la case du vaisseau
-
-          // Transformation en perspective pour le haut et le bas du vaisseau
-          const [leftX1, bottomY1] = transformPerspective(
-            shipLeftX,
-            shipBottomY,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-          const [rightX1, bottomY2] = transformPerspective(
-            shipRightX,
-            shipBottomY,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-          const [topX, topY] = transformPerspective(
-            (shipLeftX + shipRightX) / 2, // Milieu pour le sommet du triangle
-            shipTopY,
-            perspectivePointX,
-            perspectivePointY,
-            height
-          );
-
-          // Dessiner le vaisseau déformé en perspective
-          context.beginPath();
-          context.moveTo(topX, topY); // Sommet du triangle (vaisseau)
-          context.lineTo(leftX1, bottomY1); // Bas gauche
-          context.lineTo(rightX1, bottomY2); // Bas droit
-          context.closePath();
-          context.fillStyle = "white";
-          context.fill();
-        }
-      }
-    };
-
-    const animationFrameId = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [context, canvasSize, shipPosition, currentOffsetY, showShip]);
-
+  // Canvas context initialization with error handling
   useEffect(() => {
-    const update = () => {
-      setCurrentOffsetY((prevOffsetY) => {
-        let newOffsetY = prevOffsetY + 6;
-        const spacingY = 0.15 * canvasSize.height;
-        if (newOffsetY >= spacingY) {
-          newOffsetY -= spacingY;
-        }
-        return newOffsetY;
-      });
-    };
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      setGameError("Canvas element not found");
+      return;
+    }
 
-    const intervalId = setInterval(update, 1000 / 60);
-    return () => clearInterval(intervalId);
-  }, [canvasSize.height]);
-
-  // Gestion des événements clavier pour déplacer le vaisseau
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") {
-        setShipPosition((prevPos) => Math.max(prevPos - 1, 0)); // Aller à gauche dans la grille
-      } else if (event.key === "ArrowRight") {
-        setShipPosition((prevPos) => Math.min(prevPos + 1, nbColumns - 1)); // Aller à droite dans la grille
+    try {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setGameError("Failed to get 2D rendering context");
+        return;
       }
-    };
 
-    window.addEventListener("keydown", handleKeyDown); // Écouter les événements clavier
-
-    return () => window.removeEventListener("keydown", handleKeyDown); // Nettoyer l'événement
+      // Configure context for optimal performance
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      
+      setContext(ctx);
+      setGameError(null); // Clear any previous errors
+    } catch (error) {
+      console.error("Error initializing canvas context:", error);
+      setGameError("Failed to initialize canvas");
+    }
   }, []);
 
+  // Generate multi-tile width route segments for coherent path (max 3 tiles wide)
+  const generateRouteSegment = useCallback((centerX: number, y: number, width: number = 2): TileCoordinate[] => {
+    const tiles: TileCoordinate[] = [];
+    
+    // Ensure width doesn't exceed 3 tiles
+    const constrainedWidth = Math.min(3, Math.max(1, width));
+    const halfWidth = Math.floor(constrainedWidth / 2);
+    
+    // Create tiles around the center position
+    for (let offset = -halfWidth; offset <= halfWidth; offset++) {
+      const tileX = centerX + offset;
+      // Ensure tile is within bounds
+      if (tileX >= 0 && tileX < GAME_CONSTANTS.NB_COLUMNS) {
+        tiles.push({ x: tileX, y: y });
+      }
+    }
+    
+    return tiles;
+  }, []);
+
+  // Generate initial tiles synchronously to prevent race condition at startup
+  const generateInitialTiles = useCallback(() => {
+    try {
+      const initialTiles: TileCoordinate[] = [];
+      
+      // Starting position (center of track, aligned with ship)
+      let centerX = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2); // Position 3
+      let lastY = gameStateRef.current.currentYLoop + 1; // Start at Y = 1
+      
+      // Generate initial set of route segments to ensure ship has a coherent path
+      for (let i = 0; i < GAME_CONSTANTS.MIN_TILES; i++) {
+        const routeWidth = Math.random() < 0.3 ? 2 : 3; // 30% chance of width 2, 70% chance of width 3
+        
+        // For the first few segments, keep path straight to ensure ship can start safely
+        if (i < 3) {
+          // Keep first 3 segments straight (no random movement)
+          const segmentTiles = generateRouteSegment(centerX, lastY, routeWidth);
+          initialTiles.push(...segmentTiles);
+        } else {
+          // After first 3 segments, allow smooth path generation with varied movement
+          const moveChance = Math.random();
+          let movement = 0;
+          
+          if (moveChance < 0.2) {
+            movement = -1; // Move left (20%)
+          } else if (moveChance < 0.4) {
+            movement = 1;  // Move right (20%)
+          }
+          // else movement = 0 (go straight - 60% for smoother paths)
+          
+          // Apply movement with bounds checking - allow more track width usage
+          // With max 3-tile width, center can be from 1 to 5 (tiles 0-6 available)
+          const newCenterX = Math.max(1, Math.min(GAME_CONSTANTS.NB_COLUMNS - 2, centerX + movement));
+          centerX = newCenterX;
+          
+          const segmentTiles = generateRouteSegment(centerX, lastY, routeWidth);
+          initialTiles.push(...segmentTiles);
+        }
+        lastY++;
+      }
+      
+      // Set tiles immediately (synchronous)
+      setTilesCoordinates(initialTiles);
+      
+      console.log(`Generated ${initialTiles.length} initial tiles in ${GAME_CONSTANTS.MIN_TILES} segments, starting at center position ${Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2)}`);
+      
+    } catch (error) {
+      console.error("Error generating initial tiles:", error);
+      // Fallback: ensure at least a multi-tile segment exists where ship starts
+      const fallbackCenter = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2);
+      const fallbackTiles = generateRouteSegment(fallbackCenter, gameStateRef.current.currentYLoop + 1, 2);
+      setTilesCoordinates(fallbackTiles);
+    }
+  }, [generateRouteSegment]);
+
+  // Initialize game controllers
+  useEffect(() => {
+    try {
+      // Initialize player controller
+      playerControllerRef.current.initialize(gameStateRef.current.shipPosition);
+      
+      // Set collision detector boundaries (fix off-by-one error)
+      collisionDetectorRef.current.setBoundaries({
+        minX: 0,
+        maxX: GAME_CONSTANTS.NB_COLUMNS - 1, // Valid positions: 0 to 6
+        minY: 0,
+        maxY: Number.MAX_SAFE_INTEGER,
+      });
+
+      // Initialize particle system
+      particleSystemRef.current = new ParticleSystem(canvasSize, {
+        maxParticles: 150,
+        spawnRate: 0.8,
+        speedThreshold: 180,
+        enableSpeedLines: true,
+        enableSparks: true,
+        enableDust: true,
+      });
+
+      // Generate initial tiles synchronously to prevent race condition
+      generateInitialTiles();
+
+    } catch (error) {
+      console.error("Error initializing game controllers:", error);
+      setGameError("Failed to initialize game controllers");
+    }
+
+    // Capture the controller reference for cleanup
+    const controller = playerControllerRef.current;
+    
+    // Cleanup function
+    return () => {
+      try {
+        if (controller) {
+          controller.cleanup();
+        }
+      } catch (error) {
+        console.error("Error cleaning up game controllers:", error);
+      }
+    };
+  }, [generateInitialTiles, canvasSize]);
+
+  // Optimized tile generation with multi-tile width route segments
+  const generateTilesCoordinates = useCallback(() => {
+    setTilesCoordinates((prevTiles) => {
+      try {
+        // Filter tiles efficiently without creating intermediate arrays
+        const validTiles = prevTiles.filter((tile) => tile.y >= gameStateRef.current.currentYLoop);
+        
+        // Count segments instead of individual tiles to determine how many we need
+        const segmentsByY = new Map<number, TileCoordinate[]>();
+        validTiles.forEach(tile => {
+          if (!segmentsByY.has(tile.y)) {
+            segmentsByY.set(tile.y, []);
+          }
+          segmentsByY.get(tile.y)!.push(tile);
+        });
+        
+        const segmentsNeeded = GAME_CONSTANTS.MIN_TILES - segmentsByY.size;
+        if (segmentsNeeded <= 0) return prevTiles;
+
+        // Find the last segment's center position for continuity
+        const lastSegmentY = Math.max(...Array.from(segmentsByY.keys()));
+        const lastSegmentTiles = segmentsByY.get(lastSegmentY) || [];
+        
+        // Calculate center of last segment for smooth continuation
+        let centerX: number;
+        if (lastSegmentTiles.length > 0) {
+          const minX = Math.min(...lastSegmentTiles.map(t => t.x));
+          const maxX = Math.max(...lastSegmentTiles.map(t => t.x));
+          centerX = Math.floor((minX + maxX) / 2);
+        } else {
+          centerX = Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2);
+        }
+        
+        let nextY = lastSegmentY + 1;
+
+        // Generate new route segments
+        const newTiles: TileCoordinate[] = [];
+        for (let i = 0; i < segmentsNeeded; i++) {
+          const routeWidth = Math.random() < 0.3 ? 2 : 3; // 30% chance of width 2, 70% chance of width 3
+          
+          // Smooth path generation with controlled movement for variety
+          const moveChance = Math.random();
+          let movement = 0;
+          
+          if (moveChance < 0.2) {
+            movement = -1; // Move left (20%)
+          } else if (moveChance < 0.4) {
+            movement = 1;  // Move right (20%)
+          }
+          // else movement = 0 (go straight - 60% for smoother, more natural paths)
+          
+          // Apply movement with bounds checking - allow more track width usage
+          // With max 3-tile width, center can be from 1 to 5 (tiles 0-6 available)
+          centerX = Math.max(1, Math.min(GAME_CONSTANTS.NB_COLUMNS - 2, centerX + movement));
+          
+          const segmentTiles = generateRouteSegment(centerX, nextY, routeWidth);
+          newTiles.push(...segmentTiles);
+          nextY++;
+        }
+
+        return [...validTiles, ...newTiles];
+      } catch (error) {
+        console.error("Error generating tiles:", error);
+        return prevTiles; // Return previous state on error
+      }
+    });
+  }, [generateRouteSegment]);
+
+  // Handle collision events
+  const handleCollision = useCallback((gameState: GameState, collision: CollisionResult) => {
+    try {
+      gameState.lastCollision = collision;
+
+      switch (collision.severity) {
+        case 'fatal':
+          // Immediate game over
+          gameState.lives = 0;
+          gameState.gameStatus = 'gameOver';
+          break;
+          
+        case 'major':
+          // Lose a life
+          gameState.lives -= 1;
+          if (gameState.lives <= 0) {
+            gameState.gameStatus = 'gameOver';
+          } else {
+            // Brief pause and reset position
+            setTimeout(() => {
+              if (gameState.gameStatus === 'playing') {
+                playerControllerRef.current.setPosition(
+                  Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2),
+                  GAME_CONSTANTS.NB_COLUMNS
+                );
+              }
+            }, 500);
+          }
+          break;
+          
+        case 'minor':
+          // Small score penalty, no life lost
+          gameState.score = Math.max(0, gameState.score - 50);
+          break;
+          
+        default:
+          // No action needed
+          break;
+      }
+
+      // Visual feedback for collision
+      if (collision.severity !== 'none') {
+        console.log(`Collision detected: ${collision.collisionType} (${collision.severity})`);
+        
+        // Could add screen shake, sound effects, etc. here
+        if (typeof window !== 'undefined' && 'navigator' in window && 'vibrate' in navigator) {
+          // Haptic feedback on mobile devices
+          const intensity = collision.severity === 'fatal' ? 200 : 
+                          collision.severity === 'major' ? 100 : 50;
+          navigator.vibrate(intensity);
+        }
+      }
+
+    } catch (error) {
+      console.error('Error handling collision:', error);
+    }
+  }, []);
+
+  // Reset game to initial state
+  const resetGame = useCallback(() => {
+    try {
+      const initialState: GameState = {
+        currentOffsetY: 0,
+        currentYLoop: 0,
+        shipPosition: Math.floor(GAME_CONSTANTS.NB_COLUMNS / 2),
+        speed: GAME_CONSTANTS.SCROLL_SPEED,
+        score: 0,
+        lives: 3,
+        gameStatus: 'playing',
+        lastCollision: null,
+      };
+
+      gameStateRef.current = initialState;
+      setGameState(initialState);
+      
+      // Reset controllers
+      playerControllerRef.current.setPosition(
+        initialState.shipPosition,
+        GAME_CONSTANTS.NB_COLUMNS
+      );
+      
+      // Clear particle system
+      if (particleSystemRef.current) {
+        particleSystemRef.current.clear();
+      }
+      
+      // Generate initial tiles synchronously to prevent race condition
+      generateInitialTiles();
+      
+    } catch (error) {
+      console.error('Error resetting game:', error);
+      setGameError('Failed to reset game');
+    }
+  }, [generateInitialTiles]);
+
+  // Pause/unpause game
+  const togglePause = useCallback(() => {
+    const currentState = gameStateRef.current;
+    if (currentState.gameStatus === 'playing') {
+      currentState.gameStatus = 'paused';
+    } else if (currentState.gameStatus === 'paused') {
+      currentState.gameStatus = 'playing';
+    }
+    setGameState({ ...currentState });
+  }, []);
+
+  // Global keyboard handlers for game controls
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      switch (e.key.toLowerCase()) {
+        case ' ':
+        case 'space':
+          e.preventDefault();
+          togglePause();
+          break;
+        case 'r':
+          e.preventDefault();
+          if (gameState.gameStatus === 'gameOver' || e.ctrlKey) {
+            resetGame();
+          }
+          break;
+        case 'escape':
+          e.preventDefault();
+          if (gameState.gameStatus === 'playing') {
+            togglePause();
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [togglePause, resetGame, gameState.gameStatus]);
+
+  // Unified game loop with proper cleanup and time-based animation
+  useEffect(() => {
+    if (!context) return;
+
+    let isRunning = true;
+    let frameCount = 0;
+
+    const gameLoop = (currentTime: number) => {
+      if (!isRunning) return;
+
+      try {
+        frameCount++;
+        // Calculate delta time for smooth animation
+        const deltaTime = lastTimeRef.current > 0 ? (currentTime - lastTimeRef.current) / 1000 : 0;
+        lastTimeRef.current = currentTime;
+
+        // Update game state only if playing
+        const currentState = gameStateRef.current;
+        
+        if (currentState.gameStatus === 'playing') {
+          // Update player input and ship position
+          const playerState = playerControllerRef.current.update(deltaTime, GAME_CONSTANTS.NB_COLUMNS);
+          currentState.shipPosition = playerState.position;
+
+          // Update scrolling
+          const newOffsetY = currentState.currentOffsetY + (currentState.speed * deltaTime);
+          const spacingY = GAME_CONSTANTS.TILE_SPACING * canvasSize.height;
+
+          if (newOffsetY >= spacingY) {
+            currentState.currentYLoop += 1;
+            currentState.currentOffsetY = newOffsetY - spacingY;
+            currentState.score += 10; // Increment score
+            
+            // Generate new tiles synchronously before collision detection
+            generateTilesCoordinates();
+          } else {
+            currentState.currentOffsetY = newOffsetY;
+          }
+
+          // Check collisions (after tile generation if needed)
+          // Only check collisions if we have sufficient tiles to avoid false positives
+          let collisionResult: CollisionResult = { 
+            hasCollision: false, 
+            severity: 'none', 
+            collisionType: 'none', 
+            distance: 0, 
+            position: { x: currentState.shipPosition, y: 0 } 
+          };
+          
+          if (tilesCoordinates.length >= 3) { // Require at least 3 tiles before collision detection
+            collisionResult = collisionDetectorRef.current.checkAllCollisions(
+              currentState.shipPosition,
+              0, // Ship Y position (always at bottom)
+              tilesCoordinates,
+              currentState.currentYLoop
+            );
+          }
+
+          // Handle collision
+          if (collisionResult.hasCollision && collisionResult.severity !== 'none') {
+            handleCollision(currentState, collisionResult);
+          } else {
+            // Clear previous collision if no longer colliding
+            currentState.lastCollision = null;
+          }
+
+          // Update progressive speed system
+          const isOnTrack = !collisionResult.hasCollision || collisionResult.severity === 'none';
+          speedSystemRef.current.update(deltaTime, isOnTrack, currentState.score);
+          currentState.speed = speedSystemRef.current.getCurrentSpeed();
+
+          // Handle perfect turns and near misses for skill bonuses
+          if (isOnTrack && Math.abs(playerState.position - Math.floor(playerState.position + 0.5)) < 0.1) {
+            // Player is very close to lane center - record perfect turn
+            speedSystemRef.current.recordPerfectTurn();
+          }
+
+          // Reset combo on collision
+          if (collisionResult.hasCollision && collisionResult.severity !== 'none') {
+            speedSystemRef.current.resetCombo();
+          }
+
+          // Update particle system
+          if (particleSystemRef.current) {
+            const speedState = speedSystemRef.current.getState();
+            const isBoosting = speedState.boostTimeRemaining > 0;
+            
+            particleSystemRef.current.update(
+              deltaTime,
+              currentState.speed,
+              currentState.shipPosition,
+              isOnTrack,
+              isBoosting
+            );
+          }
+        }
+
+        // Update React state periodically (not every frame for performance)
+        if (frameCount % 10 === 0) {
+          setGameState({ ...currentState });
+        }
+
+        // Clear canvas efficiently
+        context.clearRect(0, 0, canvasSize.width, canvasSize.height);
+
+        // Render game objects with error handling
+        try {
+          // Draw parallax background and track base
+          Track({
+            context,
+            canvasSize,
+            nbColumns: GAME_CONSTANTS.NB_COLUMNS,
+            showBackground: true,
+            showGridLines: true,
+            showCenterLine: true,
+            gameSpeed: currentState.speed / GAME_CONSTANTS.SCROLL_SPEED,
+            scrollOffset: currentState.currentOffsetY + (currentState.currentYLoop * canvasSize.height * GAME_CONSTANTS.TILE_SPACING)
+          });
+
+          // Draw path tiles
+          Path({
+            context,
+            canvasSize,
+            currentOffsetY: currentState.currentOffsetY,
+            currentYLoop: currentState.currentYLoop,
+            nbColumns: GAME_CONSTANTS.NB_COLUMNS,
+            tilesCoordinates,
+          });
+
+          // Draw particles (before ship for proper layering)
+          if (particleSystemRef.current) {
+            particleSystemRef.current.render(context);
+          }
+
+          // Draw ship if enabled
+          if (showShip) {
+            Ship({
+              canvasContext: context,
+              canvasSize,
+              shipPosition: currentState.shipPosition,
+              nbColumns: GAME_CONSTANTS.NB_COLUMNS,
+            });
+          }
+        } catch (renderError) {
+          console.error("Rendering error:", renderError);
+          setGameError("Rendering failed");
+        }
+
+        // Continue animation loop
+        animationFrameRef.current = requestAnimationFrame(gameLoop);
+      } catch (error) {
+        console.error("Game loop error:", error);
+        setGameError("Game loop failed");
+      }
+    };
+
+    // Start the game loop
+    animationFrameRef.current = requestAnimationFrame(gameLoop);
+
+    // Cleanup function to prevent memory leaks
+    return () => {
+      isRunning = false;
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [context, canvasSize, showShip, tilesCoordinates, generateTilesCoordinates, handleCollision]);
+
+
+  // Error display component
+  const ErrorDisplay = () => {
+    if (!gameError) return null;
+    
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-red-900 bg-opacity-75">
+        <div className="bg-red-800 text-white p-4 rounded-lg">
+          <h3 className="text-lg font-bold">Game Error</h3>
+          <p>{gameError}</p>
+          <button 
+            onClick={() => setGameError(null)}
+            className="mt-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="w-full h-full">
+    <div className="w-full h-full relative">
       <canvas
         ref={canvasRef}
         width={canvasSize.width}
         height={canvasSize.height}
+        className="block"
+        style={{
+          width: '100%',
+          height: '100%',
+          imageRendering: 'pixelated' // For crisp pixel art if needed
+        }}
       />
+      <ErrorDisplay />
+      
+      {/* Game UI Overlay */}
+      <div className="absolute inset-0 pointer-events-none">
+        {/* Score and Lives */}
+        <div className="absolute top-4 left-4 text-white text-lg font-bold bg-black bg-opacity-50 p-3 rounded-lg">
+          <div>Score: {gameState.score}</div>
+          <div>Lives: {gameState.lives}</div>
+          <div>Speed: {Math.round(gameState.speed)}px/s</div>
+        </div>
+
+        {/* Controls Info */}
+        <div className="absolute top-4 right-4 text-white text-sm text-right bg-black bg-opacity-50 p-3 rounded-lg">
+          <div>← → or A D: Move</div>
+          <div>Space: Pause</div>
+          <div>R: Reset</div>
+        </div>
+
+        {/* Speed Boost Indicator */}
+        {speedSystemRef.current && speedSystemRef.current.getState().boostTimeRemaining > 0 && (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+            <div className="text-3xl font-bold text-yellow-400 animate-pulse">
+              BOOST!
+            </div>
+          </div>
+        )}
+
+        {/* Collision Warning */}
+        {gameState.lastCollision && gameState.lastCollision.severity !== 'none' && (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+            <div className={`text-2xl font-bold px-6 py-3 rounded-lg animate-pulse ${
+              gameState.lastCollision.severity === 'fatal' ? 'bg-red-600 text-white' :
+              gameState.lastCollision.severity === 'major' ? 'bg-orange-600 text-white' :
+              'bg-yellow-600 text-black'
+            }`}>
+              {gameState.lastCollision.collisionType === 'off-track' ? 'OFF TRACK!' :
+               gameState.lastCollision.collisionType === 'boundary' ? 'BOUNDARY HIT!' :
+               'COLLISION!'}
+            </div>
+          </div>
+        )}
+
+        {/* Game Over Screen */}
+        {gameState.gameStatus === 'gameOver' && (
+          <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center pointer-events-auto">
+            <div className="bg-gray-900 text-white p-8 rounded-xl text-center border-2 border-blue-500 shadow-lg">
+              <h2 className="text-4xl font-bold mb-6 text-red-500">Game Over</h2>
+              <p className="text-2xl mb-3">Final Score: <span className="font-bold text-yellow-400">{gameState.score}</span></p>
+              <p className="text-xl mb-2">Distance Traveled: <span className="font-bold">{gameState.currentYLoop} segments</span></p>
+              <p className="text-lg mb-8">Top Speed: <span className="font-bold">{Math.round(speedSystemRef.current?.getSpeedBreakdown().total || 0)} px/s</span></p>
+              <button 
+                onClick={resetGame}
+                className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl font-bold text-xl transition-all transform hover:scale-105"
+              >
+                Play Again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Pause Screen */}
+        {gameState.gameStatus === 'paused' && (
+          <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center pointer-events-auto">
+            <div className="bg-gray-900 text-white p-8 rounded-xl text-center border-2 border-blue-500 shadow-lg">
+              <h2 className="text-3xl font-bold mb-6 text-blue-400">Paused</h2>
+              <div className="mb-6">
+                <p className="text-xl">Score: <span className="font-bold text-yellow-400">{gameState.score}</span></p>
+                <p className="text-xl">Lives: <span className="font-bold text-green-400">{gameState.lives}</span></p>
+              </div>
+              <button 
+                onClick={togglePause}
+                className="px-6 py-3 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 rounded-lg font-bold text-xl transition-all transform hover:scale-105"
+              >
+                Resume Game
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Development info overlay */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white p-2 text-xs font-mono">
+          <div>Status: {gameState.gameStatus}</div>
+          <div>Ship Pos: {gameState.shipPosition.toFixed(2)}</div>
+          <div>Y Loop: {gameState.currentYLoop}</div>
+          <div>Offset: {Math.round(gameState.currentOffsetY)}</div>
+          <div>Tiles: {tilesCoordinates.length}</div>
+          {particleSystemRef.current && (
+            <div>Particles: {particleSystemRef.current.getParticleCount()}</div>
+          )}
+          {gameState.lastCollision && (
+            <div>Collision: {gameState.lastCollision.collisionType} ({gameState.lastCollision.severity})</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
