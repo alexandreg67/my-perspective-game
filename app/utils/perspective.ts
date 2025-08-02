@@ -50,7 +50,7 @@ export const calculatePerspectiveScale = (z: number, viewerDistance: number = 40
   }
 
   // Ensure z is non-negative and add small epsilon to prevent division issues
-  const safeZ = Math.max(0, z);
+  const safeZ = z >= 0 ? z : 0;
   const epsilon = 0.001;
   
   // Perspective formula: scale = f / (f + z) where f is focal length

@@ -49,7 +49,7 @@ export default function Home() {
           Start Racing
         </Link>
         <a 
-          href="https://github.com/yourusername/my-perspective-game" 
+          href="https://github.com/alexandreg67/my-perspective-game" 
           target="_blank" 
           rel="noopener noreferrer"
           className="px-8 py-4 bg-gray-800 hover:bg-gray-700 rounded-xl font-bold text-xl transition text-center"

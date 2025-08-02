@@ -82,8 +82,9 @@ export class CollisionDetector {
         if (nearbyTiles.length === 0) {
           // No tiles at all - check if this is game startup or actual off-track
           const totalTileCount = pathTiles.length;
+          const GAME_STARTUP_TILE_THRESHOLD = 5; // Minimum tiles required for reliable collision detection
           
-          if (totalTileCount < 5) {
+          if (totalTileCount < GAME_STARTUP_TILE_THRESHOLD) {
             // Likely game startup - be more forgiving
             return {
               hasCollision: true,
